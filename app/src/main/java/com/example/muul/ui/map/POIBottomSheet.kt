@@ -46,7 +46,8 @@ import com.example.muul.ui.theme.CategoryTienda
 fun POIBottomSheet(
     poi: POI,
     distanciaTexto: String,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onAddToRoute: () -> Unit = {}
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -209,19 +210,38 @@ fun POIBottomSheet(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // Botón cerrar
-            Button(
-                onClick = onDismiss,
+            // Botones
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                ),
-                shape = RoundedCornerShape(12.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(
-                    text = "Cerrar",
-                    modifier = Modifier.padding(vertical = 4.dp)
-                )
+                Button(
+                    onClick = { onAddToRoute(); onDismiss() },
+                    modifier = Modifier
+                        .weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        text = "Agregar a Ruta",
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                }
+                Button(
+                    onClick = onDismiss,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        text = "Cerrar",
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                }
             }
         }
     }

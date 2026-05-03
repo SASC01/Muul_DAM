@@ -42,7 +42,7 @@ class MainActivity : ComponentActivity() {
     private fun loadMap() {
         setContent {
             MuulTheme {
-                MapScreen()
+                com.example.muul.ui.main.MuulApp()
             }
         }
     }

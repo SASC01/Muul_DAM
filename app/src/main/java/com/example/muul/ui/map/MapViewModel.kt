@@ -8,6 +8,7 @@ import com.example.muul.data.local.HaversineUtils
 import com.example.muul.data.model.POI
 import com.example.muul.data.remote.POIRepository
 import com.example.muul.util.LocationHelper
+import com.example.muul.util.StepTracker
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -41,6 +42,14 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
     private val _mapReady = MutableStateFlow(false)
     val mapReady: StateFlow<Boolean> = _mapReady
 
+    private val _zoomLevel = MutableStateFlow(14.0)
+    val zoomLevel: StateFlow<Double> = _zoomLevel
+
+    // Step tracking
+    private val stepTracker = StepTracker(application)
+    private val _isTracking = MutableStateFlow(false)
+    val isTracking: StateFlow<Boolean> = _isTracking
+
     val categorias = listOf("todos", "comida", "cultural", "deportes", "tienda", "servicio", "atraccion")
 
     val categoriaEmojis = mapOf(
@@ -66,6 +75,23 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
     init {
         Log.d("MUUL", "ViewModel init - empezando")
         fetchUserLocation()
+    }
+
+    fun updateZoomLevel(newZoom: Double) {
+        _zoomLevel.value = newZoom
+        applyFilters()
+    }
+
+    fun startRoute(routeId: String) {
+        if (_isTracking.value) return
+        stepTracker.start(routeId)
+        _isTracking.value = true
+    }
+
+    fun stopRoute() {
+        if (!_isTracking.value) return
+        stepTracker.stop()
+        _isTracking.value = false
     }
 
     private fun fetchUserLocation() {
@@ -112,7 +138,7 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
                 }.sortedBy { it.distanciaMetros }
 
                 _pois.value = dataConDistancia
-                _filteredPois.value = dataConDistancia
+                applyFilters()
                 Log.d("MUUL", "filteredPois actualizado: ${_filteredPois.value.size}")
             } catch (e: Exception) {
                 Log.e("MUUL", "Error cargando POIs: ${e.message}", e)
@@ -146,6 +172,25 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
         var result = _pois.value
         val filter = _activeFilter.value
         val query = _searchQuery.value
+        val zoom = _zoomLevel.value
+
+        // Filtrar por distancia según nivel de zoom
+        val maxDistanceMeters = when {
+            zoom >= 17 -> 500      // Muy cercano: 500m
+            zoom >= 15 -> 1500     // Cercano: 1.5km
+            zoom >= 13 -> 3000     // Medio: 3km
+            zoom >= 11 -> 8000     // Lejano: 8km
+            else -> 15000          // Muy lejano: 15km
+        }
+
+        val userLocation = _ubicacionUsuario.value ?: Pair(19.8440, -90.5300)
+        result = result.filter { poi ->
+            val distance = HaversineUtils.haversine(
+                userLocation.first, userLocation.second,
+                poi.latitud, poi.longitud
+            )
+            distance <= maxDistanceMeters
+        }
 
         if (filter != "todos") {
             result = result.filter { it.categoria == filter }

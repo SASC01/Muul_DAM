@@ -10,6 +10,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -23,9 +26,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.muul.ui.route.RouteBottomSheet
+import com.example.muul.ui.route.RouteViewModel
 import com.mapbox.geojson.Point
 import com.mapbox.maps.CameraOptions
 import com.mapbox.maps.MapView
@@ -33,24 +39,33 @@ import com.mapbox.maps.Style
 import com.mapbox.maps.plugin.annotation.annotations
 import com.mapbox.maps.plugin.annotation.generated.CircleAnnotationManager
 import com.mapbox.maps.plugin.annotation.generated.CircleAnnotationOptions
+import com.mapbox.maps.plugin.annotation.generated.PolylineAnnotationManager
+import com.mapbox.maps.plugin.annotation.generated.PolylineAnnotationOptions
 import com.mapbox.maps.plugin.annotation.generated.createCircleAnnotationManager
+import com.mapbox.maps.plugin.annotation.generated.createPolylineAnnotationManager
 import com.mapbox.maps.plugin.gestures.gestures
+import kotlin.math.abs
 
 @Composable
 fun MapScreen(
-    viewModel: MapViewModel = viewModel()
+    viewModel: MapViewModel = viewModel(),
+    routeViewModel: RouteViewModel = viewModel()
 ) {
     val pois by viewModel.filteredPois.collectAsState()
     val selectedPoi by viewModel.selectedPoi.collectAsState()
     val loading by viewModel.loading.collectAsState()
     val ubicacion by viewModel.ubicacionUsuario.collectAsState()
     val mapReady by viewModel.mapReady.collectAsState()
+    val isTracking by viewModel.isTracking.collectAsState()
+    val currentRoute by routeViewModel.currentRoute.collectAsState()
 
     var mapView by remember { mutableStateOf<MapView?>(null) }
     var poiManager by remember { mutableStateOf<CircleAnnotationManager?>(null) }
     var userManager by remember { mutableStateOf<CircleAnnotationManager?>(null) }
-    // Guardar referencia a los POIs actuales para el click listener
+    var routeLineManager by remember { mutableStateOf<PolylineAnnotationManager?>(null) }
     var currentPoisRef by remember { mutableStateOf<List<com.example.muul.data.model.POI>>(emptyList()) }
+    var showRouteSheet by remember { mutableStateOf(false) }
+
     currentPoisRef = pois
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -71,9 +86,10 @@ fun MapScreen(
                                 .zoom(14.0)
                                 .build()
                         )
-                        mapboxMap.loadStyle(Style.STANDARD)
+                        mapboxMap.loadStyle(Style.LIGHT) {
+                            // Estilo cargado
+                        }
 
-                        // Habilitar gestos
                         gestures.pitchEnabled = true
                         gestures.scrollEnabled = true
                         gestures.rotateEnabled = true
@@ -81,20 +97,24 @@ fun MapScreen(
                         gestures.doubleTapToZoomInEnabled = true
                         gestures.doubleTouchToZoomOutEnabled = true
 
-                        // Crear managers
+                        // Listener para cambios de cámara (Mapbox v11)
+                        mapboxMap.subscribeCameraChanged {
+                            viewModel.updateZoomLevel(mapboxMap.cameraState.zoom)
+                        }
+
                         poiManager = annotations.createCircleAnnotationManager()
                         userManager = annotations.createCircleAnnotationManager()
+                        routeLineManager = annotations.createPolylineAnnotationManager()
 
-                        // Click listener - usa currentPoisRef para tener la lista actualizada
                         poiManager?.addClickListener { annotation ->
                             val clickedPoi = currentPoisRef.minByOrNull { poi ->
-                                val latDiff = Math.abs(poi.latitud - annotation.point.latitude())
-                                val lngDiff = Math.abs(poi.longitud - annotation.point.longitude())
+                                val latDiff = abs(poi.latitud - annotation.point.latitude())
+                                val lngDiff = abs(poi.longitud - annotation.point.longitude())
                                 latDiff + lngDiff
                             }
                             clickedPoi?.let {
-                                val latDiff = Math.abs(it.latitud - annotation.point.latitude())
-                                val lngDiff = Math.abs(it.longitud - annotation.point.longitude())
+                                val latDiff = abs(it.latitud - annotation.point.latitude())
+                                val lngDiff = abs(it.longitud - annotation.point.longitude())
                                 if (latDiff + lngDiff < 0.001) {
                                     viewModel.selectPoi(it)
                                 }
@@ -104,7 +124,6 @@ fun MapScreen(
                     }
                 },
                 update = { _ ->
-                    // Actualizar POIs
                     poiManager?.let { manager ->
                         manager.deleteAll()
                         val annotations = pois.map { poi ->
@@ -129,7 +148,6 @@ fun MapScreen(
                         }
                     }
 
-                    // Actualizar punto de usuario
                     userManager?.let { manager ->
                         manager.deleteAll()
                         ubicacion?.let { (lat, lng) ->
@@ -143,22 +161,35 @@ fun MapScreen(
                             )
                         }
                     }
+
+                    routeLineManager?.let { manager ->
+                        manager.deleteAll()
+                        val route = currentRoute
+                        if (route != null && route.lugares.size >= 2) {
+                            val points = route.lugares.map {
+                                Point.fromLngLat(it.longitud, it.latitud)
+                            }
+                            val polylineOptions = PolylineAnnotationOptions()
+                                .withPoints(points)
+                                .withLineColor("#003E6F")
+                                .withLineWidth(3.0)
+                            manager.create(polylineOptions)
+                        }
+                    }
                 }
             )
         }
 
-        // Search + Filters
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.TopCenter)
-                .padding(top = 48.dp)
+                .padding(top = 8.dp)
         ) {
             MuulSearchBar(viewModel)
             FilterChips(viewModel)
         }
 
-        // Botón mi ubicación
         FloatingActionButton(
             onClick = {
                 viewModel.refreshLocation()
@@ -185,7 +216,56 @@ fun MapScreen(
             )
         }
 
-        // POI count badge
+        FloatingActionButton(
+            onClick = {
+                ubicacion?.let { (lat, lng) ->
+                    routeViewModel.surpriseMe(lat, lng, pois, maxDistanceKm = 5.0)
+                    showRouteSheet = true
+                }
+            },
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(16.dp)
+                .padding(bottom = 80.dp),
+            containerColor = Color(0xFFFDD835),
+            shape = RoundedCornerShape(24.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Lightbulb,
+                contentDescription = "Sorprendeme",
+                tint = Color(0xFF003E6F)
+            )
+        }
+
+        val route = currentRoute
+        val hasRouteItems = route?.lugares?.isNotEmpty() == true
+        FloatingActionButton(
+            onClick = {
+                if (isTracking) {
+                    viewModel.stopRoute()
+                } else {
+                    if (route != null && hasRouteItems) {
+                        viewModel.startRoute(route.id)
+                    }
+                }
+            },
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 32.dp),
+            containerColor = when {
+                isTracking -> MaterialTheme.colorScheme.error
+                hasRouteItems -> MaterialTheme.colorScheme.primary
+                else -> MaterialTheme.colorScheme.surfaceVariant
+            },
+            shape = RoundedCornerShape(24.dp)
+        ) {
+            Icon(
+                imageVector = if (isTracking) Icons.Default.Stop else Icons.Default.PlayArrow,
+                contentDescription = if (isTracking) "Detener ruta" else "Iniciar ruta",
+                tint = if (hasRouteItems || isTracking) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
         if (!loading) {
             Box(
                 modifier = Modifier
@@ -206,7 +286,6 @@ fun MapScreen(
             }
         }
 
-        // Loading
         if (loading) {
             Box(
                 modifier = Modifier
@@ -225,12 +304,27 @@ fun MapScreen(
             }
         }
 
-        // Bottom sheet
+        if (showRouteSheet) {
+            RouteBottomSheet(
+                routeViewModel = routeViewModel,
+                onDismiss = { showRouteSheet = false },
+                onStartTracking = { routeToTrack ->
+                    viewModel.startRoute(routeToTrack.id)
+                    showRouteSheet = false
+                }
+            )
+        }
+
         selectedPoi?.let { poi ->
             POIBottomSheet(
                 poi = poi,
                 distanciaTexto = viewModel.formatDistance(poi.distanciaMetros),
-                onDismiss = { viewModel.clearSelectedPoi() }
+                onDismiss = { viewModel.clearSelectedPoi() },
+                onAddToRoute = {
+                    routeViewModel.addToRoute(poi)
+                    viewModel.clearSelectedPoi()
+                    showRouteSheet = true
+                }
             )
         }
     }
