@@ -12,6 +12,7 @@ import com.example.muul.util.StepTracker
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlin.math.hypot
 
 class MapViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -44,6 +45,12 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _zoomLevel = MutableStateFlow(14.0)
     val zoomLevel: StateFlow<Double> = _zoomLevel
+
+    private val _viewportCenter = MutableStateFlow<Pair<Double, Double>?>(null)
+    val viewportCenter: StateFlow<Pair<Double, Double>?> = _viewportCenter
+
+    private val _viewportRadiusMeters = MutableStateFlow<Double?>(null)
+    val viewportRadiusMeters: StateFlow<Double?> = _viewportRadiusMeters
 
     // Step tracking
     private val stepTracker = StepTracker(application)
@@ -82,8 +89,26 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
         applyFilters()
     }
 
+    fun updateVisibleViewport(
+        centerLat: Double,
+        centerLng: Double,
+        metersPerPixelAtLatitude: Double,
+        viewportWidthPx: Int,
+        viewportHeightPx: Int
+    ) {
+        if (viewportWidthPx <= 0 || viewportHeightPx <= 0) return
+
+        val diagonalPixels = hypot(viewportWidthPx.toDouble(), viewportHeightPx.toDouble())
+        val estimatedRadiusMeters = (metersPerPixelAtLatitude * diagonalPixels) / 2.0
+
+        _viewportCenter.value = centerLat to centerLng
+        _viewportRadiusMeters.value = estimatedRadiusMeters.takeIf { it > 0 }
+        applyFilters()
+    }
+
     fun startRoute(routeId: String) {
         if (_isTracking.value) return
+        Log.d("MUUL", "Starting route tracking for ID: $routeId")
         stepTracker.start(routeId)
         _isTracking.value = true
     }
@@ -176,11 +201,11 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
 
         // Filtrar por distancia según nivel de zoom
         val maxDistanceMeters = when {
-            zoom >= 17 -> 500      // Muy cercano: 500m
-            zoom >= 15 -> 1500     // Cercano: 1.5km
-            zoom >= 13 -> 3000     // Medio: 3km
-            zoom >= 11 -> 8000     // Lejano: 8km
-            else -> 15000          // Muy lejano: 15km
+            zoom >= 17 -> 400      // Muy cercano: 400m
+            zoom >= 15 -> 1200     // Cercano: 1.2km
+            zoom >= 13 -> 2500     // Medio: 2.5km
+            zoom >= 11 -> 4500     // Lejano: 4.5km
+            else -> 7000           // Muy lejano: 7km
         }
 
         val userLocation = _ubicacionUsuario.value ?: Pair(19.8440, -90.5300)
@@ -190,6 +215,20 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
                 poi.latitud, poi.longitud
             )
             distance <= maxDistanceMeters
+        }
+
+        val viewportCenter = _viewportCenter.value
+        val viewportRadius = _viewportRadiusMeters.value
+        if (viewportCenter != null && viewportRadius != null) {
+            result = result.filter { poi ->
+                val distance = HaversineUtils.haversine(
+                    viewportCenter.first,
+                    viewportCenter.second,
+                    poi.latitud,
+                    poi.longitud
+                )
+                distance <= viewportRadius
+            }
         }
 
         if (filter != "todos") {

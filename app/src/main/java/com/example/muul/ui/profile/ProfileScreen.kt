@@ -7,8 +7,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material3.Button
@@ -45,25 +43,13 @@ fun ProfileScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        Text(text = "Rutas registradas", style = MaterialTheme.typography.titleMedium)
+        // Mostrar contador total de pasos
+        Text(text = "Pasos dados", style = MaterialTheme.typography.titleMedium)
         Spacer(modifier = Modifier.height(8.dp))
-
-        if (user?.stepsByRoute.isNullOrEmpty()) {
-            Text(text = "No hay rutas registradas.", style = MaterialTheme.typography.bodyMedium)
-        } else {
-            LazyColumn(modifier = Modifier.fillMaxWidth()) {
-                items(user!!.stepsByRoute.entries.toList()) { entry ->
-                    val routeId = entry.key
-                    val steps = entry.value
-                    Column(modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp)) {
-                        Text(text = "Ruta: $routeId", style = MaterialTheme.typography.labelSmall)
-                        Text(text = "$steps pasos", style = MaterialTheme.typography.bodyLarge)
-                    }
-                }
-            }
-        }
+        Text(
+            text = "${user?.totalSteps ?: 0} pasos",
+            style = MaterialTheme.typography.displaySmall
+        )
 
         Spacer(modifier = Modifier.height(20.dp))
 
@@ -77,3 +63,4 @@ fun ProfileScreen(
         }
     }
 }
+

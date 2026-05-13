@@ -2,6 +2,7 @@ package com.example.muul.data.local
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
 import org.json.JSONObject
 import com.example.muul.data.model.User
 
@@ -18,10 +19,12 @@ class UserRepository(context: Context) {
         val userJson = JSONObject().apply {
             put("email", email)
             put("password", password)
+            put("total_steps", 0)
             put("steps", JSONObject())
         }
         prefs.edit().putString(KEY_USER_PREFIX + email, userJson.toString()).apply()
         prefs.edit().putString(KEY_CURRENT_EMAIL, email).apply()
+        Log.d("MUUL_AUTH", "Usuario registrado: $email")
         return true
     }
 
@@ -31,6 +34,7 @@ class UserRepository(context: Context) {
         val stored = obj.optString("password")
         if (stored == password) {
             prefs.edit().putString(KEY_CURRENT_EMAIL, email).apply()
+            Log.d("MUUL_AUTH", "Usuario logueado: $email")
             return true
         }
         return false
@@ -48,24 +52,26 @@ class UserRepository(context: Context) {
 
     fun addStepsForRoute(routeId: String, steps: Int) {
         val user = getCurrentUser() ?: return
-        val mutable = user.stepsByRoute.toMutableMap()
-        mutable[routeId] = (mutable[routeId] ?: 0) + steps
-        saveSteps(user.email, mutable)
+        val newTotalSteps = user.totalSteps + steps
+        Log.d("MUUL_STEPS", "Agregando $steps pasos para ruta $routeId. Total anterior: ${user.totalSteps}, Total nuevo: $newTotalSteps")
+        saveUserWithSteps(user.email, newTotalSteps)
     }
 
-    private fun saveSteps(email: String, stepsMap: Map<String, Int>) {
+    private fun saveUserWithSteps(email: String, totalSteps: Int) {
         val raw = prefs.getString(KEY_USER_PREFIX + email, null) ?: return
         val obj = JSONObject(raw)
-        val stepsObj = JSONObject()
-        stepsMap.forEach { (k, v) -> stepsObj.put(k, v) }
-        obj.put("steps", stepsObj)
+        obj.put("total_steps", totalSteps)
         prefs.edit().putString(KEY_USER_PREFIX + email, obj.toString()).apply()
+        Log.d("MUUL_STEPS", "Guardados $totalSteps pasos para $email")
     }
 
     private fun fromJson(raw: String): User {
         val obj = JSONObject(raw)
         val email = obj.optString("email")
         val password = obj.optString("password")
+        val totalSteps = obj.optInt("total_steps", 0)
+        
+        // Mantener compatibilidad con formato anterior
         val stepsObj = obj.optJSONObject("steps")
         val stepsMap = mutableMapOf<String, Int>()
         if (stepsObj != null) {
@@ -75,6 +81,8 @@ class UserRepository(context: Context) {
                 stepsMap[k] = stepsObj.optInt(k, 0)
             }
         }
-        return User(email = email, password = password, stepsByRoute = stepsMap)
+        
+        Log.d("MUUL_USER", "Cargando usuario: $email, totalSteps: $totalSteps")
+        return User(email = email, password = password, totalSteps = totalSteps, stepsByRoute = stepsMap)
     }
 }

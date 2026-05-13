@@ -33,6 +33,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.muul.ui.auth.AuthViewModel
 import com.example.muul.ui.map.MapScreen
+import com.example.muul.ui.route.RouteViewModel
 import com.example.muul.ui.profile.ProfileScreen
 
 @Composable
@@ -56,6 +57,7 @@ fun MuulMainScreen(
     val navController = rememberNavController()
     val currentUser = authViewModel.currentUser.collectAsState()
     val selectedTab = remember { mutableIntStateOf(0) }
+    val routeViewModel: RouteViewModel = viewModel()
 
     val tabs = listOf(
         NavTab("map", "MAP", Icons.Default.Map),
@@ -79,10 +81,10 @@ fun MuulMainScreen(
                 startDestination = "map"
             ) {
                 composable("map") {
-                    MapScreen()
+                    MapScreen(routeViewModel = routeViewModel)
                 }
                 composable("explore") {
-                    ExploreScreen()
+                    ExploreScreen(routeViewModel = routeViewModel)
                 }
                 composable("community") {
                     CommunityScreen()
