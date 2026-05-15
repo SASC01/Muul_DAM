@@ -4,11 +4,11 @@ import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.muul.data.DataModule
 import com.example.muul.data.local.HaversineUtils
 import com.example.muul.data.local.RoutePlanner
 import com.example.muul.data.local.RoutingRepository
 import com.example.muul.data.local.RouteStorageRepository
-import com.example.muul.data.local.UserRepository
 import com.example.muul.data.model.POI
 import com.example.muul.data.model.ItineraryStop
 import com.example.muul.data.model.Ruta
@@ -20,13 +20,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class RouteViewModel(application: Application) : AndroidViewModel(application) {
-    private val userRepo = UserRepository(application)
+    private val userRepo = DataModule.getUserRepository(application)
     private val routeRepo = RouteStorageRepository(application)
 
     private val _currentRoute = MutableStateFlow<Ruta?>(null)
     val currentRoute: StateFlow<Ruta?> = _currentRoute
 
-    // Geometry for the current route (list of lat,lng pairs following streets)
     private val _currentRouteGeometry = MutableStateFlow<List<Pair<Double, Double>>>(emptyList())
     val currentRouteGeometry: StateFlow<List<Pair<Double, Double>>> = _currentRouteGeometry
 
@@ -55,7 +54,6 @@ class RouteViewModel(application: Application) : AndroidViewModel(application) {
         refreshSavedRoutes()
     }
 
-    // Agregar un lugar a la ruta actual
     fun addToRoute(poi: POI) {
         val current = _currentRoute.value ?: Ruta()
         if (current.lugares.size < _maxPlaces) {
@@ -66,7 +64,6 @@ class RouteViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Remover un lugar de la ruta
     fun removeFromRoute(index: Int) {
         val current = _currentRoute.value ?: return
         if (index in current.lugares.indices) {
@@ -77,7 +74,6 @@ class RouteViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Limpiar ruta actual
     fun clearRoute() {
         _currentRoute.value = null
     }
@@ -87,13 +83,11 @@ class RouteViewModel(application: Application) : AndroidViewModel(application) {
         updateCurrentRouteTransport()
     }
 
-    // Recompute route geometry and metrics using routing API
     private fun recomputeRouteForTransport() {
         val route = _currentRoute.value ?: return
         if (route.lugares.size < 2) return
 
         viewModelScope.launch {
-            // throttle/recompute guard handled by lastRecompute* checks in caller
             try {
                 val start = route.lugares.first()
                 val rest = route.lugares.drop(1)
@@ -107,16 +101,13 @@ class RouteViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 if (routing != null) {
                     _currentRouteGeometry.value = routing.geometry
-                    // Update persisted route metrics in memory
                     _currentRoute.value = route.copy(
                         distanciaTotal = routing.distanceMeters,
                         plannedDurationMinutes = (routing.durationSeconds / 60.0).toInt()
                     )
-                    // record last recompute
                     lastRecomputeLocation = Pair(start.latitud, start.longitud)
                     lastRecomputeTimestamp = System.currentTimeMillis()
                 } else {
-                    // Fallback to Haversine if routing failed
                     _currentRouteGeometry.value = emptyList()
                     _currentRoute.value = route.copy(
                         distanciaTotal = RoutePlanner.routeDistanceMeters(route),
@@ -124,17 +115,15 @@ class RouteViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             } catch (e: Exception) {
-                // Keep previous geometry on failure
                 lastRecomputeTimestamp = System.currentTimeMillis()
             }
         }
     }
 
-    // Throttle state to avoid frequent Directions API calls
     private var lastRecomputeLocation: Pair<Double, Double>? = null
     private var lastRecomputeTimestamp: Long = 0L
-    private val MIN_RECOMPUTE_INTERVAL_MS = 15_000L // 15s
-    private val MIN_MOVE_METERS = 30.0 // 30 meters
+    private val MIN_RECOMPUTE_INTERVAL_MS = 15_000L 
+    private val MIN_MOVE_METERS = 30.0
 
     private fun shouldRecomputeForLocation(lat: Double, lng: Double): Boolean {
         val now = System.currentTimeMillis()
@@ -155,21 +144,14 @@ class RouteViewModel(application: Application) : AndroidViewModel(application) {
 
     fun saveCurrentRoute(routeName: String): Ruta? {
         val route = _currentRoute.value ?: return null
-
-        // Ensure the route keeps the user's location as first point for display,
-        // but persist the route WITHOUT the user_location as visible stops.
         val routeWithLocation = if (route.lugares.isNotEmpty() && route.lugares[0].id == "user_location") {
             route
         } else {
-            Log.w("MUUL_ROUTE", "User location not present as first point when saving route")
             route
         }
 
         val visiblePois = routeWithLocation.lugares.filterNot { it.id == "user_location" }
-        if (visiblePois.isEmpty()) {
-            Log.w("MUUL_ROUTE", "No visible POIs to save")
-            return null
-        }
+        if (visiblePois.isEmpty()) return null
 
         val transportMode = _selectedTransportMode.value
         val persistedRoute = routeWithLocation.copy(lugares = visiblePois)
@@ -182,14 +164,11 @@ class RouteViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         viewModelScope.launch {
-            Log.d("MUUL_ROUTE", "Saving route: ${savedRoute.nombre} with ID: ${savedRoute.id}")
             routeRepo.saveRoute(savedRoute)
             refreshSavedRoutes()
         }
 
-        // Keep _currentRoute including the user_location so the UI shows the start point
         _currentRoute.value = routeWithLocation
-
         return savedRoute
     }
 
@@ -223,32 +202,20 @@ class RouteViewModel(application: Application) : AndroidViewModel(application) {
         return RoutePlanner.estimateMinutes(route, _selectedTransportMode.value)
     }
 
-    // Guardar ruta actual (al terminar de rastrear pasos)
     fun saveRoute(steps: Int) {
         val route = _currentRoute.value ?: return
         if (route.lugares.isEmpty()) return
-
         val routeWithSteps = route.copy(pasosTotales = steps)
-
         viewModelScope.launch {
-            // Guardar en historial local
             val currentHistory = _routeHistory.value.toMutableList()
             currentHistory.add(routeWithSteps)
             _routeHistory.value = currentHistory
-
-            // Guardar en perfil de usuario
-            // (aquí podrías persistir en UserRepository si lo necesitas)
         }
-
         clearRoute()
     }
 
-    // Prepend user location as first point in route
     fun prependUserLocation(userLat: Double, userLng: Double) {
-        // If there's no current route, create an empty one so we can prepend the user location
         val current = _currentRoute.value ?: Ruta()
-
-        // Create a POI representing user's current position
         val userLocationPoi = POI(
             id = "user_location",
             nombre = "Tu ubicación",
@@ -259,43 +226,35 @@ class RouteViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         if (current.lugares.isEmpty()) {
-            // If no places yet, just set the user location as the only point
             val newRoute = current.copy(lugares = listOf(userLocationPoi))
             _currentRoute.value = newRoute
-            Log.d("MUUL_ROUTE", "Posición del usuario agregada como punto inicial (ruta vacía)")
-            // Recompute route geometry (no-op if not enough points)
             if (shouldRecomputeForLocation(userLat, userLng)) {
                 recomputeRouteForTransport()
             }
             return
         }
 
-        // If first place is already user_location, update its coordinates
         val first = current.lugares[0]
         if (first.id == "user_location") {
             val updatedFirst = first.copy(latitud = userLat, longitud = userLng)
             val newPlaces = current.lugares.toMutableList()
             newPlaces[0] = updatedFirst
             _currentRoute.value = current.copy(lugares = newPlaces)
-            Log.d("MUUL_ROUTE", "Posición del usuario actualizada en la ruta")
             if (shouldRecomputeForLocation(userLat, userLng)) {
                 recomputeRouteForTransport()
             }
             return
         }
 
-        // Otherwise, prepend only if far enough from current first point
         if (HaversineUtils.haversine(current.lugares[0].latitud, current.lugares[0].longitud, userLat, userLng) > 100.0) {
             val newRoute = current.copy(lugares = listOf(userLocationPoi) + current.lugares)
             _currentRoute.value = newRoute
-            Log.d("MUUL_ROUTE", "Posición del usuario agregada como punto inicial")
             if (shouldRecomputeForLocation(userLat, userLng)) {
                 recomputeRouteForTransport()
             }
         }
     }
 
-    // Sorprendeme: seleccionar lugares aleatorios dentro de distancia máxima
     fun surpriseMe(
         userLat: Double,
         userLng: Double,
@@ -303,20 +262,13 @@ class RouteViewModel(application: Application) : AndroidViewModel(application) {
         maxDistanceKm: Double = 5.0
     ) {
         val maxDistanceM = maxDistanceKm * 1000
-
-        // Filtrar POIs dentro de la distancia
         val nearbyPois = availablePois.filter { poi ->
             val distance = HaversineUtils.haversine(userLat, userLng, poi.latitud, poi.longitud)
             distance <= maxDistanceM
         }
-
         if (nearbyPois.isEmpty()) return
-
-        // Seleccionar 3-5 lugares aleatorios
         val selectedCount = (3..5).random().coerceAtMost(nearbyPois.size)
         val randomPois = nearbyPois.shuffled().take(selectedCount)
-
-        // Crear POI para posición del usuario como primer punto
         val userLocationPoi = POI(
             id = "user_location",
             nombre = "Tu ubicación",
@@ -325,7 +277,6 @@ class RouteViewModel(application: Application) : AndroidViewModel(application) {
             longitud = userLng,
             descripcion = "Punto de inicio de la ruta"
         )
-
         val routePois = listOf(userLocationPoi) + randomPois
         val provisionalRoute = Ruta(
             nombre = "Ruta Sorpresa",
@@ -335,18 +286,14 @@ class RouteViewModel(application: Application) : AndroidViewModel(application) {
             distanciaTotal = RoutePlanner.routeDistanceMeters(Ruta(lugares = routePois.filterNot { it.id == "user_location" })),
             startTimeMinutes = _startTimeMinutes.value
         )
-
         _currentRoute.value = provisionalRoute
-        Log.d("MUUL_ROUTE", "Ruta sorpresa creada con posición del usuario como inicio")
         lastRecomputeTimestamp = 0L
         recomputeRouteForTransport()
     }
 
-    // Calcular distancia total de la ruta
     fun calculateTotalDistance(): Double {
         val route = _currentRoute.value ?: return 0.0
         if (route.lugares.size < 2) return 0.0
-
         var total = 0.0
         for (i in 0 until route.lugares.size - 1) {
             val p1 = route.lugares[i]
@@ -362,8 +309,6 @@ class RouteViewModel(application: Application) : AndroidViewModel(application) {
         _currentRoute.value = current.copy(
             transportMode = transportMode.name
         )
-
-        // Recompute using routing API
         recomputeRouteForTransport()
     }
 }

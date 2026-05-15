@@ -6,7 +6,7 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.util.Log
-import com.example.muul.data.local.UserRepository
+import com.example.muul.data.DataModule
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -17,7 +17,7 @@ class StepTracker(private val context: Context) {
     private var steps = 0
     private var running = false
     private var routeId: String? = null
-    private val repo = UserRepository(context)
+    private val repo = DataModule.getUserRepository(context)
 
     init {
         Log.d("MUUL_SENSOR", "StepTracker inicializado. Sensor disponible: ${stepDetector != null}")
@@ -30,7 +30,6 @@ class StepTracker(private val context: Context) {
         override fun onSensorChanged(event: SensorEvent?) {
             if (!running) return
             event ?: return
-            // TYPE_STEP_DETECTOR reports 1.0 for each step
             val delta = event.values?.getOrNull(0)?.toInt() ?: 0
             if (delta > 0) {
                 steps += delta
@@ -71,7 +70,6 @@ class StepTracker(private val context: Context) {
             val captured = steps
             Log.d("MUUL_SENSOR", "StepTracker detenido. Pasos capturados: $captured para ruta: $rid")
             
-            // persist asynchronously
             CoroutineScope(Dispatchers.IO).launch {
                 Log.d("MUUL_STEPS", "Guardando $captured pasos para ruta $rid")
                 repo.addStepsForRoute(rid, captured)
