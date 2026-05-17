@@ -12,6 +12,7 @@ import com.example.muul.util.StepTracker
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collect
 import kotlin.math.hypot
 
 class MapViewModel(application: Application) : AndroidViewModel(application) {
@@ -42,6 +43,9 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _mapReady = MutableStateFlow(false)
     val mapReady: StateFlow<Boolean> = _mapReady
+
+    private var lastPoiRefreshLocation: Pair<Double, Double>? = null
+    private val minPoiRefreshDistanceMeters = 35.0
 
     private val _zoomLevel = MutableStateFlow(14.0)
     val zoomLevel: StateFlow<Double> = _zoomLevel
@@ -81,7 +85,7 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         Log.d("MUUL", "ViewModel init - empezando")
-        fetchUserLocation()
+        observeUserLocation()
     }
 
     fun updateZoomLevel(newZoom: Double) {
@@ -107,27 +111,55 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startRoute(routeId: String) {
-        if (_isTracking.value) return
-        Log.d("MUUL", "Starting route tracking for ID: $routeId")
-        stepTracker.start(routeId)
+    if (_isTracking.value) return
+
+    Log.d("MUUL", "Starting route tracking for ID: $routeId")
+
+    val started = stepTracker.start(routeId)
+
+    if (started) {
         _isTracking.value = true
+    } else {
+        _isTracking.value = false
+        Log.e("MUUL", "No se pudo iniciar el tracking de pasos")
     }
+}
 
     fun stopRoute() {
-        if (!_isTracking.value) return
-        stepTracker.stop()
-        _isTracking.value = false
-    }
+    if (!_isTracking.value) return
 
-    private fun fetchUserLocation() {
+    stepTracker.stop()
+    _isTracking.value = false
+}
+
+    private fun observeUserLocation() {
         viewModelScope.launch {
             try {
-                Log.d("MUUL", "Buscando ubicación GPS...")
-                val location = locationHelper.getCurrentLocation()
-                Log.d("MUUL", "Ubicación obtenida: $location")
-                _ubicacionUsuario.value = location
+                Log.d("MUUL", "Buscando ubicación GPS inicial...")
+                val initialLocation = locationHelper.getCurrentLocation()
+                Log.d("MUUL", "Ubicación inicial obtenida: $initialLocation")
+                _ubicacionUsuario.value = initialLocation
+                lastPoiRefreshLocation = initialLocation
                 _mapReady.value = true
                 fetchPOIs()
+
+                locationHelper.getLocationUpdates().collect { location ->
+                    val previousLocation = _ubicacionUsuario.value
+                    _ubicacionUsuario.value = location
+
+                    val shouldRefreshPois = previousLocation == null ||
+                        HaversineUtils.haversine(
+                            previousLocation.first,
+                            previousLocation.second,
+                            location.first,
+                            location.second
+                        ) >= minPoiRefreshDistanceMeters
+
+                    if (shouldRefreshPois && lastPoiRefreshLocation != location) {
+                        lastPoiRefreshLocation = location
+                        fetchPOIs()
+                    }
+                }
             } catch (e: Exception) {
                 Log.e("MUUL", "Error GPS: ${e.message}", e)
                 _ubicacionUsuario.value = null
