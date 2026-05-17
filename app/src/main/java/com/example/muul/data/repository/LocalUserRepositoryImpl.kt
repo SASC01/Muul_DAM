@@ -49,16 +49,56 @@ class LocalUserRepositoryImpl(context: Context) : UserRepository {
     }
 
     override suspend fun addStepsForRoute(routeId: String, steps: Int) {
-        val user = getCurrentUser() ?: return
+        if (steps <= 0) {
+            Log.w("MUUL_STEPS", "No se guardan pasos porque steps = $steps para ruta $routeId")
+            return
+        }
+
+        val user = getCurrentUser() ?: run {
+            Log.e("MUUL_STEPS", "No hay usuario actual para guardar pasos")
+            return
+        }
+
         val newTotalSteps = user.totalSteps + steps
-        saveUserWithSteps(user.email, newTotalSteps)
+        val newRouteSteps = user.stepsByRoute[routeId].orEmptySteps() + steps
+
+        Log.d(
+            "MUUL_STEPS",
+            "Guardando $steps pasos para ruta $routeId. Total nuevo: $newTotalSteps"
+        )
+
+        saveUserWithSteps(
+            email = user.email,
+            totalSteps = newTotalSteps,
+            stepsByRoute = user.stepsByRoute + (routeId to newRouteSteps)
+        )
     }
 
-    private fun saveUserWithSteps(email: String, totalSteps: Int) {
+    private fun saveUserWithSteps(
+        email: String,
+        totalSteps: Int,
+        stepsByRoute: Map<String, Int>
+    ) {
         val raw = prefs.getString(KEY_USER_PREFIX + email, null) ?: return
         val obj = JSONObject(raw)
+        val stepsObj = JSONObject()
+
+        stepsByRoute.forEach { (routeId, routeSteps) ->
+            stepsObj.put(routeId, routeSteps)
+        }
+
         obj.put("total_steps", totalSteps)
-        prefs.edit().putString(KEY_USER_PREFIX + email, obj.toString()).apply()
+        obj.put("steps", stepsObj)
+
+        val saved = prefs.edit()
+            .putString(KEY_USER_PREFIX + email, obj.toString())
+            .commit()
+
+        if (saved) {
+            Log.d("MUUL_STEPS", "Pasos guardados para $email: $totalSteps")
+        } else {
+            Log.e("MUUL_STEPS", "No se pudieron persistir pasos para $email")
+        }
     }
 
     private fun fromJson(raw: String): User {
@@ -80,3 +120,5 @@ class LocalUserRepositoryImpl(context: Context) : UserRepository {
         return User(email = email, password = password, totalSteps = totalSteps, stepsByRoute = stepsMap)
     }
 }
+
+private fun Int?.orEmptySteps(): Int = this ?: 0

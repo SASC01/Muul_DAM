@@ -58,7 +58,12 @@ fun RouteBottomSheet(
     val route = currentRoute.value ?: return
     val transportMode by routeViewModel.selectedTransportMode.collectAsState()
     val displayRoute = route.copy(lugares = route.lugares.filterNot { it.id == "user_location" })
-    val estimatedMinutes = RoutePlanner.estimateMinutes(displayRoute, transportMode)
+    val estimatedMinutes = route.plannedDurationMinutes
+        .takeIf { it > 0 }
+        ?: RoutePlanner.estimateMinutes(route, transportMode)
+    val distanceMeters = route.distanciaTotal
+        .takeIf { it > 0.0 }
+        ?: RoutePlanner.routeDistanceMeters(route)
     var routeName by remember(route.id) { mutableStateOf(route.nombre) }
     var expandedStops by remember(route.id) { mutableStateOf(false) }
 
@@ -166,7 +171,7 @@ fun RouteBottomSheet(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text("${visibleStops.size}/${routeViewModel.maxPlaces} lugares")
-                Text("${(RoutePlanner.routeDistanceMeters(displayRoute) / 1000).toInt()} km")
+                Text(formatDistance(distanceMeters))
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -260,6 +265,14 @@ fun RouteBottomSheet(
                 }
             }
         }
+    }
+}
+
+private fun formatDistance(meters: Double): String {
+    return if (meters >= 1000.0) {
+        String.format("%.1f km", meters / 1000.0)
+    } else {
+        "${meters.toInt()} m"
     }
 }
 

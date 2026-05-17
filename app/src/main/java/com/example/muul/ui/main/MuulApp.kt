@@ -1,18 +1,25 @@
 package com.example.muul.ui.main
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Explore
-import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -26,6 +33,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
@@ -60,10 +69,9 @@ fun MuulMainScreen(
     val routeViewModel: RouteViewModel = viewModel()
 
     val tabs = listOf(
-        NavTab("map", "MAP", Icons.Default.Map),
-        NavTab("explore", "EXPLORE", Icons.Default.Explore),
-        NavTab("community", "COMMUNITY", Icons.Default.Groups),
-        NavTab("profile", "PROFILE", Icons.Default.Person)
+        NavTab("map", "MAPA", Icons.Default.Map),
+        NavTab("itineraries", "ITINERARIOS", Icons.Default.CalendarMonth),
+        NavTab("profile", "PERFIL", Icons.Default.Person)
     )
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -83,11 +91,8 @@ fun MuulMainScreen(
                 composable("map") {
                     MapScreen(routeViewModel = routeViewModel)
                 }
-                composable("explore") {
-                    ExploreScreen(routeViewModel = routeViewModel)
-                }
-                composable("community") {
-                    CommunityScreen()
+                composable("itineraries") {
+                    ItinerariesScreen(routeViewModel = routeViewModel)
                 }
                 composable("profile") {
                     ProfileScreen(authViewModel = authViewModel, onDismiss = {})
@@ -98,7 +103,7 @@ fun MuulMainScreen(
         // Bottom Navigation
         NavigationBar(
             modifier = Modifier.fillMaxWidth(),
-            containerColor = MaterialTheme.colorScheme.surface,
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
             contentColor = MaterialTheme.colorScheme.onSurface
         ) {
             tabs.forEachIndexed { index, tab ->
@@ -116,16 +121,24 @@ fun MuulMainScreen(
                             imageVector = tab.icon,
                             contentDescription = tab.label,
                             tint = if (selectedTab.intValue == index)
-                                Color(0xFFFDD835) // Yellow
+                                Color(0xFF003E6F)
                             else
                                 MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     },
-                    label = { Text(tab.label) },
+                    label = {
+                        Text(
+                            tab.label,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                    },
                     colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = Color(0xFFFDD835),
-                        selectedTextColor = Color(0xFFFDD835),
-                        indicatorColor = Color.Transparent
+                        selectedIconColor = Color(0xFF003E6F),
+                        selectedTextColor = Color(0xFF003E6F),
+                        indicatorColor = Color(0xFFFFCC00),
+                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 )
             }
@@ -135,19 +148,45 @@ fun MuulMainScreen(
 
 @Composable
 fun MuulTopHeader(userEmail: String) {
-    Box(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(56.dp)
-            .background(MaterialTheme.colorScheme.surface)
+            .height(64.dp)
+            .background(MaterialTheme.colorScheme.surfaceContainerLowest)
             .padding(horizontal = 16.dp),
-        contentAlignment = Alignment.CenterStart
+        verticalAlignment = Alignment.CenterVertically
     ) {
+        IconButton(onClick = {}) {
+            Icon(
+                imageVector = Icons.Default.Menu,
+                contentDescription = "Menu",
+                tint = Color(0xFF003E6F)
+            )
+        }
+        Spacer(modifier = Modifier.width(4.dp))
         Text(
             text = "MUUL",
-            style = MaterialTheme.typography.headlineSmall,
-            color = Color(0xFF003E6F)
+            style = MaterialTheme.typography.headlineMedium.copy(
+                fontFamily = FontFamily.Serif,
+                fontWeight = FontWeight.Bold
+            ),
+            color = Color(0xFF003E6F),
+            modifier = Modifier.weight(1f)
         )
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .background(Color(0xFF003E6F), CircleShape)
+                .border(2.dp, Color(0xFFFFCC00), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = userInitials(userEmail),
+                color = Color.White,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold
+            )
+        }
     }
 }
 
@@ -156,3 +195,13 @@ data class NavTab(
     val label: String,
     val icon: ImageVector
 )
+
+private fun userInitials(email: String): String {
+    val name = email.substringBefore("@").replace(".", " ").replace("_", " ").trim()
+    if (name.isBlank()) return "M"
+
+    return name.split(" ")
+        .filter { it.isNotBlank() }
+        .take(2)
+        .joinToString("") { it.first().uppercaseChar().toString() }
+}

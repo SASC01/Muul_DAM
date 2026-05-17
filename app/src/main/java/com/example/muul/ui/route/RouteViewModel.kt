@@ -61,6 +61,7 @@ class RouteViewModel(application: Application) : AndroidViewModel(application) {
                 lugares = current.lugares + poi
             )
             _currentRoute.value = newRoute
+            recomputeRouteForTransport()
         }
     }
 
@@ -71,6 +72,7 @@ class RouteViewModel(application: Application) : AndroidViewModel(application) {
                 lugares = current.lugares.filterIndexed { i, _ -> i != index }
             )
             _currentRoute.value = newRoute
+            recomputeRouteForTransport()
         }
     }
 
@@ -85,7 +87,14 @@ class RouteViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun recomputeRouteForTransport() {
         val route = _currentRoute.value ?: return
-        if (route.lugares.size < 2) return
+        if (route.lugares.size < 2) {
+            _currentRouteGeometry.value = emptyList()
+            _currentRoute.value = route.copy(
+                distanciaTotal = 0.0,
+                plannedDurationMinutes = 0
+            )
+            return
+        }
 
         viewModelScope.launch {
             try {
@@ -158,8 +167,12 @@ class RouteViewModel(application: Application) : AndroidViewModel(application) {
         val savedRoute = persistedRoute.copy(
             nombre = routeName.ifBlank { routeWithLocation.nombre },
             transportMode = transportMode.name,
-            plannedDurationMinutes = RoutePlanner.estimateMinutes(persistedRoute, transportMode),
-            distanciaTotal = RoutePlanner.routeDistanceMeters(persistedRoute),
+            plannedDurationMinutes = routeWithLocation.plannedDurationMinutes
+                .takeIf { it > 0 }
+                ?: RoutePlanner.estimateMinutes(persistedRoute, transportMode),
+            distanciaTotal = routeWithLocation.distanciaTotal
+                .takeIf { it > 0.0 }
+                ?: RoutePlanner.routeDistanceMeters(persistedRoute),
             startTimeMinutes = _startTimeMinutes.value
         )
 

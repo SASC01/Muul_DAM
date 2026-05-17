@@ -35,4 +35,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         repo.logout()
         _currentUser.value = null
     }
+
+    fun refreshCurrentUser() {
+        _currentUser.value = repo.getCurrentUser()
+    }
 }
