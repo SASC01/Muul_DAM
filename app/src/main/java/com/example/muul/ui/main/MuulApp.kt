@@ -1,5 +1,8 @@
 package com.example.muul.ui.main
 
+import android.graphics.BitmapFactory
+import android.net.Uri
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -32,7 +35,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -44,6 +51,7 @@ import com.example.muul.ui.auth.AuthViewModel
 import com.example.muul.ui.map.MapScreen
 import com.example.muul.ui.route.RouteViewModel
 import com.example.muul.ui.profile.ProfileScreen
+import java.io.File
 
 @Composable
 fun MuulApp(
@@ -76,7 +84,10 @@ fun MuulMainScreen(
 
     Column(modifier = Modifier.fillMaxSize()) {
         // Top Header
-        MuulTopHeader(currentUser.value?.email ?: "Usuario")
+        MuulTopHeader(
+            userEmail = currentUser.value?.email ?: "Usuario",
+            profilePhotoUri = currentUser.value?.profilePhotoUri
+        )
 
         // Main content
         Box(
@@ -147,7 +158,10 @@ fun MuulMainScreen(
 }
 
 @Composable
-fun MuulTopHeader(userEmail: String) {
+fun MuulTopHeader(
+    userEmail: String,
+    profilePhotoUri: String?
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -173,19 +187,71 @@ fun MuulTopHeader(userEmail: String) {
             color = Color(0xFF003E6F),
             modifier = Modifier.weight(1f)
         )
-        Box(
-            modifier = Modifier
-                .size(42.dp)
-                .background(Color(0xFF003E6F), CircleShape)
-                .border(2.dp, Color(0xFFFFCC00), CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
+        HeaderAvatar(userEmail = userEmail, profilePhotoUri = profilePhotoUri)
+    }
+}
+
+@Composable
+private fun HeaderAvatar(
+    userEmail: String,
+    profilePhotoUri: String?
+) {
+    val context = LocalContext.current
+    val imageBitmap = remember(profilePhotoUri) {
+        if (profilePhotoUri.isNullOrBlank()) {
+            null
+        } else {
+            runCatching {
+                decodeHeaderProfileBitmap(context, profilePhotoUri)?.asImageBitmap()
+            }.getOrNull()
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .size(42.dp)
+            .background(Color(0xFF003E6F), CircleShape)
+            .border(2.dp, Color(0xFFFFCC00), CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        if (imageBitmap != null) {
+            Image(
+                bitmap = imageBitmap,
+                contentDescription = "Foto de perfil",
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(CircleShape),
+                contentScale = ContentScale.Crop
+            )
+        } else {
             Text(
                 text = userInitials(userEmail),
                 color = Color.White,
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.Bold
             )
+        }
+    }
+}
+
+private fun decodeHeaderProfileBitmap(
+    context: android.content.Context,
+    profilePhotoUri: String
+): android.graphics.Bitmap? {
+    val parsedUri = runCatching { Uri.parse(profilePhotoUri) }.getOrNull()
+
+    if (parsedUri?.scheme == "file") {
+        return BitmapFactory.decodeFile(parsedUri.path)
+    }
+
+    val file = File(profilePhotoUri)
+    if (file.exists()) {
+        return BitmapFactory.decodeFile(file.absolutePath)
+    }
+
+    return parsedUri?.let { uri ->
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            BitmapFactory.decodeStream(input)
         }
     }
 }

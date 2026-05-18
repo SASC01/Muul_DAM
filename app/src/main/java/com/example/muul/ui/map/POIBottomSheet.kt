@@ -49,6 +49,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.muul.data.model.POI
 import com.example.muul.data.model.TransportMode
+import com.example.muul.data.remote.PoiDescriptionInfo
 import com.example.muul.ui.theme.CategoryComida
 import com.example.muul.ui.theme.CategoryCultural
 import com.example.muul.ui.theme.CategoryDeportes
@@ -62,6 +63,8 @@ fun POIBottomSheet(
     distanciaTexto: String,
     travelTimeText: String,
     selectedTransportMode: TransportMode,
+    externalDescription: PoiDescriptionInfo?,
+    descriptionLoading: Boolean,
     onTransportSelected: (TransportMode) -> Unit,
     onDismiss: () -> Unit,
     onAddToRoute: () -> Unit = {}
@@ -71,6 +74,15 @@ fun POIBottomSheet(
     val categoryEmoji = poi.emoji ?: categoryEmoji(poi.categoria)
     val categoryLabel = categoryLabel(poi.categoria)
     val horario = buildHorarioText(poi)
+    val localDescription = poi.descripcion?.takeIf { it.isNotBlank() }
+    val poiBio = localDescription
+        ?: externalDescription?.text
+        ?: buildPoiBio(poi, categoryLabel, distanciaTexto)
+    val descriptionSource = when {
+        localDescription != null -> "Fuente: Muul"
+        externalDescription != null -> "Fuente: Wikipedia · ${externalDescription.sourceTitle}"
+        else -> "Descripción estimada"
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -194,14 +206,30 @@ fun POIBottomSheet(
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Spacer(modifier = Modifier.height(16.dp))
 
-            if (!poi.descripcion.isNullOrBlank()) {
-                Text(
-                    text = poi.descripcion,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-            }
+            Text(
+                text = "Sobre este lugar",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = poiBio,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = if (descriptionLoading && externalDescription == null) {
+                    "Buscando una descripción externa..."
+                } else {
+                    descriptionSource
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(modifier = Modifier.height(16.dp))
 
             if (!poi.direccion.isNullOrBlank()) {
                 InfoRow(
@@ -441,6 +469,30 @@ private fun buildHorarioText(poi: POI): String? {
         !closing.isNullOrBlank() -> "Cierra $closing"
         else -> null
     }
+}
+
+private fun buildPoiBio(
+    poi: POI,
+    categoryLabel: String,
+    distanciaTexto: String
+): String {
+    val place = poi.nombre.ifBlank { "Este lugar" }
+    val address = poi.direccion
+        ?.takeIf { it.isNotBlank() }
+        ?.let { " Se ubica en $it." }
+        .orEmpty()
+
+    val categoryDescription = when (poi.categoria) {
+        "comida" -> "ideal para probar sabores locales, tomar un descanso y sumar una parada gastronómica a tu recorrido"
+        "cultural" -> "con valor cultural para conocer mejor la historia, arquitectura y vida local de la zona"
+        "deportes" -> "pensado para actividades al aire libre, movimiento y visitas rápidas durante la ruta"
+        "tienda" -> "útil para compras, recuerdos o productos locales durante tu visita"
+        "servicio" -> "práctico para resolver necesidades del recorrido sin alejarte demasiado"
+        "atraccion" -> "recomendado como punto fotográfico o parada memorable dentro del paseo"
+        else -> "recomendado para explorar la zona y enriquecer tu recorrido"
+    }
+
+    return "$place es un punto $categoryLabel a $distanciaTexto, $categoryDescription.$address"
 }
 
 private fun transportIcon(mode: TransportMode): ImageVector {

@@ -78,6 +78,7 @@ class RouteViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearRoute() {
         _currentRoute.value = null
+        _currentRouteGeometry.value = emptyList()
     }
 
     fun setTransportMode(transportMode: TransportMode) {

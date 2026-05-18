@@ -14,28 +14,36 @@ class LocalUserRepositoryImpl(context: Context) : UserRepository {
         private const val KEY_USER_PREFIX = "user_"
     }
 
-    override suspend fun register(email: String, password: String): Boolean {
-        if (prefs.contains(KEY_USER_PREFIX + email)) return false
+    override suspend fun register(user: User): Boolean {
+        if (prefs.contains(KEY_USER_PREFIX + user.email)) return false
         val userJson = JSONObject().apply {
-            put("email", email)
-            put("password", password)
+            put("id", "local_" + user.email)
+            put("nombre", user.nombre)
+            put("apellido", user.apellido)
+            put("username", user.username)
+            put("email", user.email)
+            put("password", user.password)
             put("total_steps", 0)
+            put("num_pasos", 0)
             put("steps", JSONObject())
+            put("profile_photo_uri", JSONObject.NULL)
         }
-        prefs.edit().putString(KEY_USER_PREFIX + email, userJson.toString()).apply()
-        prefs.edit().putString(KEY_CURRENT_EMAIL, email).apply()
+        prefs.edit().putString(KEY_USER_PREFIX + user.email, userJson.toString()).apply()
+        prefs.edit().putString(KEY_CURRENT_EMAIL, user.email).apply()
         return true
     }
 
-    override suspend fun login(email: String, password: String): Boolean {
-        val raw = prefs.getString(KEY_USER_PREFIX + email, null) ?: return false
+    override suspend fun login(emailOrUsername: String, password: String): User? {
+        // En local solo buscamos por email por simplicidad del mock
+        val raw = prefs.getString(KEY_USER_PREFIX + emailOrUsername, null) ?: return null
         val obj = JSONObject(raw)
         val stored = obj.optString("password")
-        if (stored == password) {
-            prefs.edit().putString(KEY_CURRENT_EMAIL, email).apply()
-            return true
+        return if (stored == password) {
+            prefs.edit().putString(KEY_CURRENT_EMAIL, emailOrUsername).apply()
+            fromJson(raw)
+        } else {
+            null
         }
-        return false
     }
 
     override fun logout() {
@@ -59,19 +67,44 @@ class LocalUserRepositoryImpl(context: Context) : UserRepository {
             return
         }
 
-        val newTotalSteps = user.totalSteps + steps
-        val newRouteSteps = user.stepsByRoute[routeId].orEmptySteps() + steps
+        val newTotalSteps = (user.totalSteps ?: 0) + steps
+        val currentRouteSteps = user.stepsByRoute?.get(routeId) ?: 0
+        val newRouteSteps = currentRouteSteps + steps
 
         Log.d(
             "MUUL_STEPS",
             "Guardando $steps pasos para ruta $routeId. Total nuevo: $newTotalSteps"
         )
 
+        val updatedStepsByRoute = (user.stepsByRoute ?: emptyMap()) + (routeId to newRouteSteps)
+
         saveUserWithSteps(
             email = user.email,
             totalSteps = newTotalSteps,
-            stepsByRoute = user.stepsByRoute + (routeId to newRouteSteps)
+            stepsByRoute = updatedStepsByRoute
         )
+    }
+
+    override suspend fun updateProfilePhotoUri(uri: String?) {
+        val user = getCurrentUser() ?: return
+        val raw = prefs.getString(KEY_USER_PREFIX + user.email, null) ?: return
+        val obj = JSONObject(raw)
+
+        if (uri.isNullOrBlank()) {
+            obj.put("profile_photo_uri", JSONObject.NULL)
+        } else {
+            obj.put("profile_photo_uri", uri)
+        }
+
+        val saved = prefs.edit()
+            .putString(KEY_USER_PREFIX + user.email, obj.toString())
+            .commit()
+
+        if (saved) {
+            Log.d("MUUL_USER", "Foto de perfil actualizada para ${user.email}")
+        } else {
+            Log.e("MUUL_USER", "No se pudo actualizar foto de perfil para ${user.email}")
+        }
     }
 
     private fun saveUserWithSteps(
@@ -103,22 +136,30 @@ class LocalUserRepositoryImpl(context: Context) : UserRepository {
 
     private fun fromJson(raw: String): User {
         val obj = JSONObject(raw)
-        val email = obj.optString("email")
-        val password = obj.optString("password")
-        val totalSteps = obj.optInt("total_steps", 0)
-        
-        val stepsObj = obj.optJSONObject("steps")
-        val stepsMap = mutableMapOf<String, Int>()
-        if (stepsObj != null) {
-            val keys = stepsObj.keys()
-            while (keys.hasNext()) {
-                val k = keys.next()
-                stepsMap[k] = stepsObj.optInt(k, 0)
+        return User(
+            id = obj.optString("id"),
+            nombre = obj.optString("nombre"),
+            apellido = obj.optString("apellido"),
+            username = obj.optString("username"),
+            email = obj.optString("email"),
+            password = obj.optString("password"),
+            totalSteps = obj.optInt("total_steps", 0),
+            numPasos = obj.optInt("num_pasos", 0),
+            profilePhotoUri = if (obj.isNull("profile_photo_uri")) {
+                null
+            } else {
+                obj.optString("profile_photo_uri").takeIf { it.isNotBlank() }
+            },
+            stepsByRoute = mutableMapOf<String, Int>().apply {
+                val stepsObj = obj.optJSONObject("steps")
+                if (stepsObj != null) {
+                    val keys = stepsObj.keys()
+                    while (keys.hasNext()) {
+                        val k = keys.next()
+                        put(k, stepsObj.optInt(k, 0))
+                    }
+                }
             }
-        }
-        
-        return User(email = email, password = password, totalSteps = totalSteps, stepsByRoute = stepsMap)
+        )
     }
 }
-
-private fun Int?.orEmptySteps(): Int = this ?: 0

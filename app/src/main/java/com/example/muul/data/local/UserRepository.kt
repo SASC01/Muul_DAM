@@ -19,8 +19,8 @@ class UserRepository(context: Context) {
         private const val KEY_USER_PREFIX = "user_"
     }
 
-    fun register(email: String, password: String): Boolean {
-        val cleanEmail = email.trim()
+    fun register(user: User): Boolean {
+        val cleanEmail = user.email.trim()
 
         if (prefs.contains(KEY_USER_PREFIX + cleanEmail)) {
             Log.w("MUUL_AUTH", "Registro fallido: usuario ya existe $cleanEmail")
@@ -28,9 +28,14 @@ class UserRepository(context: Context) {
         }
 
         val userJson = JSONObject().apply {
+            put("id", "local_" + cleanEmail)
+            put("nombre", user.nombre)
+            put("apellido", user.apellido)
+            put("username", user.username)
             put("email", cleanEmail)
-            put("password", password)
+            put("password", user.password)
             put("total_steps", 0)
+            put("num_pasos", 0)
             put("steps", JSONObject())
         }
 
@@ -44,22 +49,22 @@ class UserRepository(context: Context) {
         return saved
     }
 
-    fun login(email: String, password: String): Boolean {
+    fun login(email: String, password: String): User? {
         val cleanEmail = email.trim()
-        val raw = prefs.getString(KEY_USER_PREFIX + cleanEmail, null) ?: return false
+        val raw = prefs.getString(KEY_USER_PREFIX + cleanEmail, null) ?: return null
         val obj = JSONObject(raw)
         val storedPassword = obj.optString("password")
 
         return if (storedPassword == password) {
-            val saved = prefs.edit()
+            prefs.edit()
                 .putString(KEY_CURRENT_EMAIL, cleanEmail)
-                .commit()
+                .apply()
 
-            Log.d("MUUL_AUTH", "Usuario logueado: $cleanEmail, saved: $saved")
-            saved
+            Log.d("MUUL_AUTH", "Usuario logueado: $cleanEmail")
+            fromJson(raw)
         } else {
             Log.w("MUUL_AUTH", "Login fallido para: $cleanEmail")
-            false
+            null
         }
     }
 
@@ -94,11 +99,13 @@ class UserRepository(context: Context) {
             return
         }
 
-        val newTotalSteps = user.totalSteps + steps
+        // Corrección de nulabilidad para evitar errores de compilación
+        val currentSteps = user.totalSteps ?: 0
+        val newTotalSteps = currentSteps + steps
 
         Log.d(
             "MUUL_STEPS",
-            "Agregando $steps pasos. Ruta: $routeId. Total anterior: ${user.totalSteps}, total nuevo: $newTotalSteps"
+            "Agregando $steps pasos. Ruta: $routeId. Total anterior: $currentSteps, total nuevo: $newTotalSteps"
         )
 
         saveUserWithSteps(user.email, newTotalSteps)
@@ -129,32 +136,25 @@ class UserRepository(context: Context) {
     private fun fromJson(raw: String): User {
         val obj = JSONObject(raw)
 
-        val email = obj.optString("email")
-        val password = obj.optString("password")
-        val totalSteps = obj.optInt("total_steps", 0)
-
-        val stepsObj = obj.optJSONObject("steps")
-        val stepsMap = mutableMapOf<String, Int>()
-
-        if (stepsObj != null) {
-            val keys = stepsObj.keys()
-
-            while (keys.hasNext()) {
-                val key = keys.next()
-                stepsMap[key] = stepsObj.optInt(key, 0)
-            }
-        }
-
-        Log.d(
-            "MUUL_USER",
-            "Cargando usuario: $email, totalSteps: $totalSteps"
-        )
-
         return User(
-            email = email,
-            password = password,
-            totalSteps = totalSteps,
-            stepsByRoute = stepsMap
+            id = obj.optString("id"),
+            nombre = obj.optString("nombre"),
+            apellido = obj.optString("apellido"),
+            username = obj.optString("username"),
+            email = obj.optString("email"),
+            password = obj.optString("password"),
+            totalSteps = obj.optInt("total_steps", 0),
+            numPasos = obj.optInt("num_pasos", 0),
+            stepsByRoute = mutableMapOf<String, Int>().apply {
+                val stepsObj = obj.optJSONObject("steps")
+                if (stepsObj != null) {
+                    val keys = stepsObj.keys()
+                    while (keys.hasNext()) {
+                        val key = keys.next()
+                        put(key, stepsObj.optInt(key, 0))
+                    }
+                }
+            }
         )
     }
 }
