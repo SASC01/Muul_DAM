@@ -9,28 +9,31 @@ data class User(
     val id: String? = null,
 
     @SerialName("nombre")
-    val nombre: String,
+    val nombre: String = "",
 
     @SerialName("apellido")
-    val apellido: String,
+    val apellido: String = "",
 
     @SerialName("username")
-    val username: String,
+    val username: String = "",
 
     @SerialName("email")
-    val email: String,
+    val email: String = "",
 
     @SerialName("password")
-    val password: String,
+    val password: String = "",
 
+    
     @SerialName("num_pasos")
-    val numPasos: Int? = 0,
+    val numPasos: Int = 0,
 
+    
     @SerialName("total_steps")
-    val totalSteps: Int? = 0,
+    val totalSteps: Int = 0,
 
+    
     @SerialName("steps_by_route")
-    val stepsByRoute: Map<String, Int>? = emptyMap(),
+    val stepsByRoute: Map<String, Int> = emptyMap(),
 
     @SerialName("profile_photo_uri")
     val profilePhotoUri: String? = null
