@@ -4,9 +4,13 @@ import android.util.Log
 import com.example.muul.BuildConfig
 import com.example.muul.data.local.HaversineUtils
 import com.example.muul.data.model.POI
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
@@ -14,39 +18,28 @@ class POIRepository {
 
     private val accessToken = BuildConfig.MAPBOX_ACCESS_TOKEN
     private val MAX_DISTANCE_METERS = 25_000.0
+    private val memoryCache = mutableMapOf<String, List<POI>>()
 
     // Categorías de Mapbox SearchBox Category API
     // https://docs.mapbox.com/api/search/search-box/#category-search
     private val poiCategories = mapOf(
         "comida" to listOf(
-            "restaurant", "cafe", "bar", "fast_food",
-            "bakery", "ice_cream", "coffee_shop",
-            "food_and_drink", "pizza", "seafood"
+            "restaurant", "cafe", "fast_food", "bar"
         ),
         "cultural" to listOf(
-            "museum", "church", "monument", "theater",
-            "art_gallery", "library", "historic_site",
-            "place_of_worship", "temple"
+            "museum", "church", "historic_site", "theater"
         ),
         "deportes" to listOf(
-            "park", "stadium", "gym", "sports",
-            "playground", "swimming_pool", "recreation"
+            "park", "gym", "stadium", "sports"
         ),
         "tienda" to listOf(
-            "shop", "supermarket", "shopping_mall",
-            "market", "clothing_store", "convenience_store",
-            "gift_shop"
+            "supermarket", "shopping_mall", "market", "shop"
         ),
         "servicio" to listOf(
-            "hospital", "pharmacy", "hotel", "bank",
-            "bus_station", "gas_station", "airport",
-            "clinic", "lodging", "atm"
+            "hospital", "pharmacy", "hotel", "gas_station"
         ),
         "atraccion" to listOf(
-            "tourist_attraction", "landmark", "beach",
-            "viewpoint", "castle", "archaeological_site",
-            "aquarium", "zoo", "marina", "national_park",
-            "attraction", "heritage"
+            "tourist_attraction", "landmark", "viewpoint", "archaeological_site"
         )
     )
 
@@ -68,42 +61,58 @@ class POIRepository {
         latitud: Double,
         longitud: Double
     ): List<POI> {
-        val allPois = mutableListOf<POI>()
-
-        // 1) Category Search — por tipo de lugar
-        for ((categoria, categories) in poiCategories) {
-            for (cat in categories) {
-                try {
-                    val results = searchByCategory(cat, latitud, longitud)
-                    val pois = results.mapNotNull { json ->
-                        parsePOI(json, categoria, latitud, longitud)
-                    }
-                    if (pois.isNotEmpty()) {
-                        Log.d("MUUL", "Category '$cat': ${pois.size} POIs")
-                    }
-                    allPois.addAll(pois)
-                } catch (e: Exception) {
-                    Log.e("MUUL", "Error category '$cat': ${e.message}")
-                }
-            }
+        val cacheKey = cacheKey(latitud, longitud)
+        memoryCache[cacheKey]?.let {
+            Log.d("MUUL", "POIs desde cache para $cacheKey: ${it.size}")
+            return it
         }
 
-        // 2) Text Search — para cosas regionales
-        for ((categoria, queries) in textQueries) {
-            for (query in queries) {
-                try {
-                    val results = searchByText(query, latitud, longitud)
-                    val pois = results.mapNotNull { json ->
-                        parsePOI(json, categoria, latitud, longitud)
+        val allPois = coroutineScope {
+            val categoryTasks = poiCategories.flatMap { (categoria, categories) ->
+                categories.map { category ->
+                    async(Dispatchers.IO) {
+                        try {
+                            val results = searchByCategory(category, latitud, longitud)
+                            val pois = results.mapNotNull { json ->
+                                parsePOI(json, categoria, latitud, longitud)
+                            }
+
+                            if (pois.isNotEmpty()) {
+                                Log.d("MUUL", "Category '$category': ${pois.size} POIs")
+                            }
+
+                            pois
+                        } catch (e: Exception) {
+                            Log.e("MUUL", "Error category '$category': ${e.message}")
+                            emptyList()
+                        }
                     }
-                    if (pois.isNotEmpty()) {
-                        Log.d("MUUL", "Text '$query': ${pois.size} POIs")
-                    }
-                    allPois.addAll(pois)
-                } catch (e: Exception) {
-                    Log.e("MUUL", "Error text '$query': ${e.message}")
                 }
             }
+
+            val textTasks = textQueries.flatMap { (categoria, queries) ->
+                queries.map { query ->
+                    async(Dispatchers.IO) {
+                        try {
+                            val results = searchByText(query, latitud, longitud)
+                            val pois = results.mapNotNull { json ->
+                                parsePOI(json, categoria, latitud, longitud)
+                            }
+
+                            if (pois.isNotEmpty()) {
+                                Log.d("MUUL", "Text '$query': ${pois.size} POIs")
+                            }
+
+                            pois
+                        } catch (e: Exception) {
+                            Log.e("MUUL", "Error text '$query': ${e.message}")
+                            emptyList()
+                        }
+                    }
+                }
+            }
+
+            (categoryTasks + textTasks).awaitAll().flatten()
         }
 
         val resultado = allPois.distinctBy { it.nombre.lowercase().trim() }
@@ -111,6 +120,9 @@ class POIRepository {
         resultado.forEach {
             Log.d("MUUL", "  ✓ ${it.emoji} ${it.nombre} [${it.categoria}]")
         }
+
+        memoryCache[cacheKey] = resultado
+
         return resultado
     }
 
@@ -124,11 +136,11 @@ class POIRepository {
             val url = "https://api.mapbox.com/search/searchbox/v1/category/${category}" +
                     "?proximity=${lng},${lat}" +
                     "&origin=${lng},${lat}" +
-                    "&limit=25" +
+                    "&limit=12" +
                     "&language=es" +
                     "&access_token=${accessToken}"
 
-            val response = URL(url).readText()
+            val response = requestText(url)
             val json = JSONObject(response)
             val features = json.getJSONArray("features")
 
@@ -157,11 +169,11 @@ class POIRepository {
                     "&origin=${lng},${lat}" +
                     "&bbox=${bbox}" +
                     "&types=poi" +
-                    "&limit=10" +
+                    "&limit=8" +
                     "&language=es" +
                     "&access_token=${accessToken}"
 
-            val response = URL(url).readText()
+            val response = requestText(url)
             val json = JSONObject(response)
             val features = json.getJSONArray("features")
 
@@ -220,7 +232,7 @@ class POIRepository {
             return POI(
                 id = mapboxId,
                 nombre = nombre,
-                descripcion = direccion ?: "Sin descripción disponible",
+                descripcion = null,
                 categoria = categoria,
                 latitud = poiLat,
                 longitud = poiLng,
@@ -243,6 +255,29 @@ class POIRepository {
             "servicio" -> "🔧"
             "atraccion" -> "📸"
             else -> "📍"
+        }
+    }
+
+    private fun cacheKey(latitud: Double, longitud: Double): String {
+        return "%.2f,%.2f".format(latitud, longitud)
+    }
+
+    private fun requestText(urlText: String): String {
+        val connection = (URL(urlText).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 5_000
+            readTimeout = 5_000
+        }
+
+        return try {
+            if (connection.responseCode !in 200..299) {
+                Log.e("MUUL", "HTTP ${connection.responseCode}: $urlText")
+                return "{}"
+            }
+
+            connection.inputStream.bufferedReader().use { it.readText() }
+        } finally {
+            connection.disconnect()
         }
     }
 }

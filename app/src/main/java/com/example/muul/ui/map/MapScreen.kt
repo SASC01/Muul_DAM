@@ -2,6 +2,11 @@ package com.example.muul.ui.map
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Typeface
+import android.graphics.Color as AndroidColor
 import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -39,9 +44,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.muul.data.model.Ruta
 import com.example.muul.data.model.TransportMode
 import com.example.muul.ui.route.RouteBottomSheet
 import com.example.muul.ui.route.RouteViewModel
+import com.mapbox.bindgen.DataRef
 import com.mapbox.geojson.Feature
 import com.mapbox.geojson.FeatureCollection
 import com.mapbox.geojson.LineString
@@ -49,6 +56,8 @@ import com.mapbox.geojson.Point
 import com.mapbox.maps.CameraOptions
 import com.mapbox.maps.ClickInteraction
 import com.mapbox.maps.GeoJSONSourceData
+import com.mapbox.maps.Image
+import com.mapbox.maps.ImageStretches
 import com.mapbox.maps.MapView
 import com.mapbox.maps.Style
 import com.mapbox.maps.extension.style.expressions.dsl.generated.get
@@ -70,11 +79,9 @@ import com.mapbox.maps.extension.style.sources.generated.geoJsonSource
 import com.mapbox.maps.plugin.annotation.annotations
 import com.mapbox.maps.plugin.annotation.generated.CircleAnnotationManager
 import com.mapbox.maps.plugin.annotation.generated.CircleAnnotationOptions
-import com.mapbox.maps.plugin.annotation.generated.PolylineAnnotationManager
-import com.mapbox.maps.plugin.annotation.generated.PolylineAnnotationOptions
 import com.mapbox.maps.plugin.annotation.generated.createCircleAnnotationManager
-import com.mapbox.maps.plugin.annotation.generated.createPolylineAnnotationManager
 import com.mapbox.maps.plugin.gestures.gestures
+import java.nio.ByteBuffer
 import kotlin.math.abs
 import kotlin.math.ceil
 
@@ -87,9 +94,9 @@ private const val POI_UNCLUSTERED_LAYER_ID = "pois-unclustered"
 private const val SELECTED_POI_SOURCE_ID = "selected-poi-source"
 private const val SELECTED_POI_HALO_LAYER_ID = "selected-poi-halo"
 private const val SELECTED_POI_DOT_LAYER_ID = "selected-poi-dot"
-private const val POI_CLUSTER_MAX_ZOOM = 14.0
-private const val POI_UNCLUSTERED_MIN_ZOOM = 14.0
-private const val POI_LABEL_MIN_ZOOM = 16.0
+private const val POI_CLUSTER_MAX_ZOOM = 0.0
+private const val POI_UNCLUSTERED_MIN_ZOOM = 10.0
+private const val POI_LABEL_MIN_ZOOM = 10.8
 private const val ROUTE_SOURCE_ID = "route-source"
 private const val ROUTE_CASING_LAYER_ID = "route-casing-layer"
 private const val ROUTE_LAYER_ID = "route-layer"
@@ -101,6 +108,8 @@ fun MapScreen(
 ) {
     val pois by viewModel.filteredPois.collectAsState()
     val selectedPoi by viewModel.selectedPoi.collectAsState()
+    val selectedPoiDescription by viewModel.selectedPoiDescription.collectAsState()
+    val selectedPoiDescriptionLoading by viewModel.selectedPoiDescriptionLoading.collectAsState()
     val loading by viewModel.loading.collectAsState()
     val ubicacion by viewModel.ubicacionUsuario.collectAsState()
     val mapReady by viewModel.mapReady.collectAsState()
@@ -167,10 +176,13 @@ fun MapScreen(
     var mapView by remember { mutableStateOf<MapView?>(null) }
     var poiManager by remember { mutableStateOf<CircleAnnotationManager?>(null) }
     var userManager by remember { mutableStateOf<CircleAnnotationManager?>(null) }
-    var routeLineManager by remember { mutableStateOf<PolylineAnnotationManager?>(null) }
     var currentPoisRef by remember { mutableStateOf<List<com.example.muul.data.model.POI>>(emptyList()) }
+    var currentRouteRef by remember { mutableStateOf<Ruta?>(null) }
     var showRouteSheet by remember { mutableStateOf(false) }
     var loadedStyle by remember { mutableStateOf<Style?>(null) }
+    var renderedPoiSignature by remember { mutableStateOf("") }
+    var renderedSelectedPoiSignature by remember { mutableStateOf("") }
+    var renderedRouteSignature by remember { mutableStateOf("") }
 
     LaunchedEffect(ubicacion) {
         ubicacion?.let { (lat, lng) ->
@@ -178,7 +190,19 @@ fun MapScreen(
         }
     }
 
+    LaunchedEffect(selectedPoi) {
+        selectedPoi?.let { poi ->
+            mapView?.mapboxMap?.setCamera(
+                CameraOptions.Builder()
+                    .center(Point.fromLngLat(poi.longitud, poi.latitud))
+                    .zoom((mapView?.mapboxMap?.cameraState?.zoom ?: 14.0).coerceAtLeast(16.0))
+                    .build()
+            )
+        }
+    }
+
     currentPoisRef = pois
+    currentRouteRef = currentRoute
 
     Box(modifier = Modifier.fillMaxSize()) {
         if (mapReady) {
@@ -202,11 +226,13 @@ fun MapScreen(
                         mapboxMap.loadStyle(Style.LIGHT) { style ->
                             loadedStyle = style
 
+                            setupPoiMarkerImages(style)
                             setupClusteredPoiLayers(style)
                             setupSelectedPoiLayer(style)
                             setupRouteLayer(style)
                             updateClusteredPoiSource(style, pois)
                             updateSelectedPoiSource(style, selectedPoi)
+                            updateRouteSource(style, currentRouteGeometry, currentRoute)
 
                             mapboxMap.addInteraction(
                                 ClickInteraction.layer(POI_CLUSTER_LAYER_ID) { feature, _ ->
@@ -251,6 +277,28 @@ fun MapScreen(
                                     true
                                 }
                             )
+
+                            mapboxMap.addInteraction(
+                                ClickInteraction.layer(ROUTE_LAYER_ID) { _, _ ->
+                                    if (currentRouteRef != null) {
+                                        viewModel.clearSelectedPoi()
+                                        showRouteSheet = true
+                                    }
+
+                                    true
+                                }
+                            )
+
+                            mapboxMap.addInteraction(
+                                ClickInteraction.layer(ROUTE_CASING_LAYER_ID) { _, _ ->
+                                    if (currentRouteRef != null) {
+                                        viewModel.clearSelectedPoi()
+                                        showRouteSheet = true
+                                    }
+
+                                    true
+                                }
+                            )
                         }
 
                         gestures.pitchEnabled = true
@@ -280,14 +328,27 @@ fun MapScreen(
 
                         poiManager = annotations.createCircleAnnotationManager()
                         userManager = annotations.createCircleAnnotationManager()
-                        routeLineManager = annotations.createPolylineAnnotationManager()
                     }
                 },
                 update = { _ ->
                     loadedStyle?.let { style ->
-                        updateClusteredPoiSource(style, pois)
-                        updateSelectedPoiSource(style, selectedPoi)
-                        updateRouteSource(style, currentRouteGeometry)
+                        val poiSignature = pois.joinToString("|") { it.id }
+                        if (poiSignature != renderedPoiSignature) {
+                            updateClusteredPoiSource(style, pois)
+                            renderedPoiSignature = poiSignature
+                        }
+
+                        val selectedPoiSignature = selectedPoi?.id.orEmpty()
+                        if (selectedPoiSignature != renderedSelectedPoiSignature) {
+                            updateSelectedPoiSource(style, selectedPoi)
+                            renderedSelectedPoiSignature = selectedPoiSignature
+                        }
+
+                        val routeSignature = buildRouteSignature(currentRouteGeometry, currentRoute)
+                        if (routeSignature != renderedRouteSignature) {
+                            updateRouteSource(style, currentRouteGeometry, currentRoute)
+                            renderedRouteSignature = routeSignature
+                        }
                     }
 
                     poiManager?.let { manager ->
@@ -309,37 +370,6 @@ fun MapScreen(
                         }
                     }
 
-                    routeLineManager?.let { manager ->
-                        manager.deleteAll()
-
-                        if (currentRouteGeometry.isNotEmpty()) {
-                            val points = currentRouteGeometry.map {
-                                Point.fromLngLat(it.second, it.first)
-                            }
-
-                            val polylineOptions = PolylineAnnotationOptions()
-                                .withPoints(points)
-                                .withLineColor("#1A73E8")
-                                .withLineWidth(5.0)
-
-                            manager.create(polylineOptions)
-                        } else {
-                            val route = currentRoute
-
-                            if (route != null && route.lugares.size >= 2) {
-                                val points = route.lugares.map {
-                                    Point.fromLngLat(it.longitud, it.latitud)
-                                }
-
-                                val polylineOptions = PolylineAnnotationOptions()
-                                    .withPoints(points)
-                                    .withLineColor("#1A73E8")
-                                    .withLineWidth(5.0)
-
-                                manager.create(polylineOptions)
-                            }
-                        }
-                    }
                 }
             )
         }
@@ -412,6 +442,9 @@ fun MapScreen(
             ExtendedFloatingActionButton(
                 onClick = {
                     viewModel.stopRoute()
+                    routeViewModel.clearRoute()
+                    viewModel.clearSelectedPoi()
+                    showRouteSheet = false
 
                     Toast.makeText(
                         context,
@@ -456,7 +489,7 @@ fun MapScreen(
             }
         }
 
-        if (loading) {
+        if (loading && pois.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -510,6 +543,8 @@ fun MapScreen(
                 distanciaTexto = viewModel.formatDistance(poi.distanciaMetros),
                 travelTimeText = formatTravelTime(poi.distanciaMetros, selectedTransportMode),
                 selectedTransportMode = selectedTransportMode,
+                externalDescription = selectedPoiDescription,
+                descriptionLoading = selectedPoiDescriptionLoading,
                 onTransportSelected = { mode ->
                     routeViewModel.setTransportMode(mode)
                 },
@@ -566,11 +601,24 @@ private fun setupRouteLayer(style: Style) {
 
 private fun updateRouteSource(
     style: Style,
-    geometry: List<Pair<Double, Double>>
+    geometry: List<Pair<Double, Double>>,
+    route: Ruta?
 ) {
     if (!style.styleSourceExists(ROUTE_SOURCE_ID)) return
 
-    if (geometry.isEmpty()) {
+    val coords = when {
+        geometry.isNotEmpty() -> geometry.map {
+            Point.fromLngLat(it.second, it.first)
+        }
+
+        route != null && route.lugares.size >= 2 -> route.lugares.map {
+            Point.fromLngLat(it.longitud, it.latitud)
+        }
+
+        else -> emptyList()
+    }
+
+    if (coords.isEmpty()) {
         style.setStyleGeoJSONSourceData(
             ROUTE_SOURCE_ID,
             "",
@@ -580,10 +628,6 @@ private fun updateRouteSource(
         )
 
         return
-    }
-
-    val coords = geometry.map {
-        Point.fromLngLat(it.second, it.first)
     }
 
     val line = LineString.fromLngLats(coords)
@@ -597,14 +641,112 @@ private fun updateRouteSource(
     )
 }
 
+private fun buildRouteSignature(
+    geometry: List<Pair<Double, Double>>,
+    route: Ruta?
+): String {
+    if (geometry.isNotEmpty()) {
+        val first = geometry.first()
+        val last = geometry.last()
+        return "g:${geometry.size}:${first.first},${first.second}:${last.first},${last.second}"
+    }
+
+    val lugares = route?.lugares.orEmpty()
+    if (lugares.isEmpty()) return "empty"
+
+    return "r:${route?.id}:${lugares.size}:${lugares.joinToString("|") { it.id }}"
+}
+
+private fun setupPoiMarkerImages(style: Style) {
+    markerSpecs().forEach { spec ->
+        if (!style.hasStyleImage(spec.id)) {
+            style.addStyleImage(
+                spec.id,
+                1.0f,
+                createMarkerImage(spec.color, spec.symbol),
+                false,
+                emptyList<ImageStretches>(),
+                emptyList<ImageStretches>(),
+                null
+            )
+        }
+    }
+}
+
+private data class MarkerSpec(
+    val id: String,
+    val color: String,
+    val symbol: String
+)
+
+private fun markerSpecs(): List<MarkerSpec> {
+    return listOf(
+        MarkerSpec("muul-marker-comida", "#FF6B35", "🍽"),
+        MarkerSpec("muul-marker-cultural", "#7C3AED", "🏛"),
+        MarkerSpec("muul-marker-deportes", "#10B981", "⚽"),
+        MarkerSpec("muul-marker-tienda", "#F59E0B", "🛍"),
+        MarkerSpec("muul-marker-servicio", "#6B7280", "🔧"),
+        MarkerSpec("muul-marker-atraccion", "#EC4899", "📸"),
+        MarkerSpec("muul-marker-default", "#003E6F", "📍")
+    )
+}
+
+private fun createMarkerImage(color: String, symbol: String): Image {
+    val size = 52
+    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    val center = size / 2f
+
+    val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = AndroidColor.argb(64, 0, 0, 0)
+    }
+    canvas.drawCircle(center, center + 2f, 20f, shadowPaint)
+
+    val circlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = AndroidColor.parseColor(color)
+    }
+    canvas.drawCircle(center, center, 20f, circlePaint)
+
+    val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = AndroidColor.WHITE
+        style = Paint.Style.STROKE
+        strokeWidth = 4f
+    }
+    canvas.drawCircle(center, center, 20f, strokePaint)
+
+    val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = AndroidColor.WHITE
+        textAlign = Paint.Align.CENTER
+        textSize = 23f
+        typeface = Typeface.DEFAULT_BOLD
+    }
+    val textY = center - (textPaint.descent() + textPaint.ascent()) / 2f
+    canvas.drawText(symbol, center, textY, textPaint)
+
+    return bitmap.toMapboxImage()
+}
+
+private fun Bitmap.toMapboxImage(): Image {
+    val pixels = IntArray(width * height)
+    getPixels(pixels, 0, width, 0, 0, width, height)
+
+    val buffer = ByteBuffer.allocateDirect(width * height * 4)
+    pixels.forEach { pixel ->
+        buffer.put(((pixel shr 16) and 0xFF).toByte())
+        buffer.put(((pixel shr 8) and 0xFF).toByte())
+        buffer.put((pixel and 0xFF).toByte())
+        buffer.put(((pixel ushr 24) and 0xFF).toByte())
+    }
+    buffer.rewind()
+
+    return Image(width, height, DataRef(buffer))
+}
+
 private fun setupClusteredPoiLayers(style: Style) {
     if (!style.styleSourceExists(POI_SOURCE_ID)) {
         style.addSource(
             geoJsonSource(POI_SOURCE_ID) {
                 featureCollection(FeatureCollection.fromFeatures(emptyList()))
-                cluster(true)
-                clusterRadius(96)
-                clusterMaxZoom(POI_CLUSTER_MAX_ZOOM.toLong())
                 maxzoom(18)
             }
         )
@@ -648,29 +790,6 @@ private fun setupClusteredPoiLayers(style: Style) {
         )
     }
 
-    if (!style.styleLayerExists(POI_ICON_LAYER_ID)) {
-        style.addLayer(
-            symbolLayer(POI_ICON_LAYER_ID, POI_SOURCE_ID) {
-                filter(not { has("point_count") })
-
-                textField(
-                    toString {
-                        get {
-                            literal("emoji")
-                        }
-                    }
-                )
-
-                textSize(13.0)
-                textIgnorePlacement(true)
-                textAllowOverlap(true)
-                textAnchor(TextAnchor.CENTER)
-                textJustify(TextJustify.CENTER)
-                minZoom(POI_UNCLUSTERED_MIN_ZOOM)
-            }
-        )
-    }
-
     if (!style.styleLayerExists(POI_UNCLUSTERED_LAYER_ID)) {
         style.addLayer(
             circleLayer(POI_UNCLUSTERED_LAYER_ID, POI_SOURCE_ID) {
@@ -704,10 +823,32 @@ private fun setupClusteredPoiLayers(style: Style) {
                     }
                 )
 
-                circleRadius(8.0)
+                circleRadius(11.5)
                 circleStrokeWidth(2.0)
                 circleStrokeColor("#FFFFFF")
-                circleOpacity(0.92)
+                circleOpacity(0.96)
+                minZoom(POI_UNCLUSTERED_MIN_ZOOM)
+            }
+        )
+    }
+
+    if (!style.styleLayerExists(POI_ICON_LAYER_ID)) {
+        style.addLayer(
+            symbolLayer(POI_ICON_LAYER_ID, POI_SOURCE_ID) {
+                filter(not { has("point_count") })
+
+                iconImage(
+                    toString {
+                        get {
+                            literal("markerIcon")
+                        }
+                    }
+                )
+                iconSize(0.8)
+                iconAllowOverlap(false)
+                iconIgnorePlacement(false)
+                textAnchor(TextAnchor.CENTER)
+                textJustify(TextJustify.CENTER)
                 minZoom(POI_UNCLUSTERED_MIN_ZOOM)
             }
         )
@@ -727,12 +868,38 @@ private fun setupClusteredPoiLayers(style: Style) {
                 )
 
                 textSize(11.0)
-                textColor("#263238")
+                textColor(
+                    match {
+                        get {
+                            literal("categoria")
+                        }
+
+                        literal("comida")
+                        literal("#E65100")
+
+                        literal("cultural")
+                        literal("#7E3FF2")
+
+                        literal("deportes")
+                        literal("#0B8043")
+
+                        literal("tienda")
+                        literal("#1A73E8")
+
+                        literal("servicio")
+                        literal("#607D8B")
+
+                        literal("atraccion")
+                        literal("#A142F4")
+
+                        literal("#263238")
+                    }
+                )
                 textHaloColor("#FFFFFF")
-                textHaloWidth(1.5)
-                textAnchor(TextAnchor.TOP)
+                textHaloWidth(1.8)
+                textAnchor(TextAnchor.LEFT)
                 textJustify(TextJustify.CENTER)
-                textOffset(listOf(0.0, 1.15))
+                textOffset(listOf(1.25, 0.0))
                 textAllowOverlap(false)
                 textIgnorePlacement(false)
                 minZoom(POI_LABEL_MIN_ZOOM)
@@ -786,6 +953,7 @@ private fun updateClusteredPoiSource(
             addStringProperty("nombre", poi.nombre)
             addStringProperty("categoria", poi.categoria)
             addStringProperty("emoji", poi.emoji ?: categoryEmoji(poi.categoria))
+            addStringProperty("markerIcon", categoryMarkerIconId(poi.categoria))
         }
     }
 
@@ -847,5 +1015,17 @@ private fun categoryEmoji(categoria: String): String {
         "servicio" -> "🔧"
         "atraccion" -> "📸"
         else -> "📍"
+    }
+}
+
+private fun categoryMarkerIconId(categoria: String): String {
+    return when (categoria) {
+        "comida" -> "muul-marker-comida"
+        "cultural" -> "muul-marker-cultural"
+        "deportes" -> "muul-marker-deportes"
+        "tienda" -> "muul-marker-tienda"
+        "servicio" -> "muul-marker-servicio"
+        "atraccion" -> "muul-marker-atraccion"
+        else -> "muul-marker-default"
     }
 }

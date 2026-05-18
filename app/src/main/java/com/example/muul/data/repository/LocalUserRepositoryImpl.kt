@@ -21,6 +21,7 @@ class LocalUserRepositoryImpl(context: Context) : UserRepository {
             put("password", password)
             put("total_steps", 0)
             put("steps", JSONObject())
+            put("profile_photo_uri", JSONObject.NULL)
         }
         prefs.edit().putString(KEY_USER_PREFIX + email, userJson.toString()).apply()
         prefs.edit().putString(KEY_CURRENT_EMAIL, email).apply()
@@ -74,6 +75,28 @@ class LocalUserRepositoryImpl(context: Context) : UserRepository {
         )
     }
 
+    override suspend fun updateProfilePhotoUri(uri: String?) {
+        val user = getCurrentUser() ?: return
+        val raw = prefs.getString(KEY_USER_PREFIX + user.email, null) ?: return
+        val obj = JSONObject(raw)
+
+        if (uri.isNullOrBlank()) {
+            obj.put("profile_photo_uri", JSONObject.NULL)
+        } else {
+            obj.put("profile_photo_uri", uri)
+        }
+
+        val saved = prefs.edit()
+            .putString(KEY_USER_PREFIX + user.email, obj.toString())
+            .commit()
+
+        if (saved) {
+            Log.d("MUUL_USER", "Foto de perfil actualizada para ${user.email}")
+        } else {
+            Log.e("MUUL_USER", "No se pudo actualizar foto de perfil para ${user.email}")
+        }
+    }
+
     private fun saveUserWithSteps(
         email: String,
         totalSteps: Int,
@@ -106,6 +129,11 @@ class LocalUserRepositoryImpl(context: Context) : UserRepository {
         val email = obj.optString("email")
         val password = obj.optString("password")
         val totalSteps = obj.optInt("total_steps", 0)
+        val profilePhotoUri = if (obj.isNull("profile_photo_uri")) {
+            null
+        } else {
+            obj.optString("profile_photo_uri").takeIf { it.isNotBlank() }
+        }
         
         val stepsObj = obj.optJSONObject("steps")
         val stepsMap = mutableMapOf<String, Int>()
@@ -117,7 +145,13 @@ class LocalUserRepositoryImpl(context: Context) : UserRepository {
             }
         }
         
-        return User(email = email, password = password, totalSteps = totalSteps, stepsByRoute = stepsMap)
+        return User(
+            email = email,
+            password = password,
+            totalSteps = totalSteps,
+            stepsByRoute = stepsMap,
+            profilePhotoUri = profilePhotoUri
+        )
     }
 }
 

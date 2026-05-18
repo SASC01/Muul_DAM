@@ -1,9 +1,15 @@
 package com.example.muul.ui.profile
 
+import android.graphics.BitmapFactory
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,9 +35,11 @@ import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.MilitaryTech
 import androidx.compose.material.icons.filled.Museum
 import androidx.compose.material.icons.filled.NightsStay
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -40,20 +48,26 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.muul.ui.auth.AuthViewModel
+import java.io.File
 import kotlin.math.roundToInt
 
 private val ProfileNavy = Color(0xFF001C43)
@@ -78,6 +92,11 @@ fun ProfileScreen(
     val level = (totalSteps / 200).coerceAtLeast(1)
     val displayName = formatDisplayName(user?.email)
     val progress = ((totalSteps % 10_000) / 10_000f).coerceIn(0.08f, 1f)
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri?.let { authViewModel.updateProfilePhoto(it) }
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -88,6 +107,16 @@ fun ProfileScreen(
     ) {
         item {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                ProfileAvatar(
+                    displayName = displayName,
+                    photoUri = user?.profilePhotoUri,
+                    onChangePhoto = {
+                        photoPickerLauncher.launch("image/*")
+                    }
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
                 Text(
                     text = displayName,
                     style = MaterialTheme.typography.headlineLarge.copy(
@@ -111,6 +140,25 @@ fun ProfileScreen(
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold
                     )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { photoPickerLauncher.launch("image/*") }) {
+                        Icon(
+                            imageVector = Icons.Default.PhotoCamera,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Cambiar foto")
+                    }
+                    if (!user?.profilePhotoUri.isNullOrBlank()) {
+                        TextButton(onClick = { authViewModel.clearProfilePhoto() }) {
+                            Text("Quitar")
+                        }
+                    }
                 }
             }
         }
@@ -216,6 +264,95 @@ fun ProfileScreen(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Cerrar sesión", fontWeight = FontWeight.Bold)
             }
+        }
+    }
+}
+
+@Composable
+private fun ProfileAvatar(
+    displayName: String,
+    photoUri: String?,
+    onChangePhoto: () -> Unit
+) {
+    val imageBitmap = rememberProfileImage(photoUri)
+
+    Box(
+        modifier = Modifier
+            .size(96.dp)
+            .background(ProfileNavy, CircleShape)
+            .border(3.dp, ProfileYellow, CircleShape)
+            .clickable(onClick = onChangePhoto),
+        contentAlignment = Alignment.Center
+    ) {
+        if (imageBitmap != null) {
+            Image(
+                bitmap = imageBitmap,
+                contentDescription = "Foto de perfil",
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(CircleShape)
+                    .border(3.dp, ProfileYellow, CircleShape),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            Text(
+                text = displayName.initials(),
+                style = MaterialTheme.typography.headlineMedium,
+                color = Color.White,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .size(30.dp)
+                .background(ProfileYellow, CircleShape)
+                .border(2.dp, Color.White, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.PhotoCamera,
+                contentDescription = null,
+                modifier = Modifier.size(17.dp),
+                tint = ProfileNavy
+            )
+        }
+    }
+}
+
+@Composable
+private fun rememberProfileImage(photoUri: String?) =
+    LocalContext.current.let { context ->
+        remember(photoUri) {
+            if (photoUri.isNullOrBlank()) {
+                null
+            } else {
+                runCatching {
+                    decodeProfileBitmap(context = context, photoUri = photoUri)?.asImageBitmap()
+                }.getOrNull()
+            }
+        }
+    }
+
+private fun decodeProfileBitmap(
+    context: android.content.Context,
+    photoUri: String
+): android.graphics.Bitmap? {
+    val parsedUri = runCatching { Uri.parse(photoUri) }.getOrNull()
+
+    if (parsedUri?.scheme == "file") {
+        return BitmapFactory.decodeFile(parsedUri.path)
+    }
+
+    val file = File(photoUri)
+    if (file.exists()) {
+        return BitmapFactory.decodeFile(file.absolutePath)
+    }
+
+    return parsedUri?.let { uri ->
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            BitmapFactory.decodeStream(input)
         }
     }
 }
@@ -486,4 +623,12 @@ private fun formatDisplayName(email: String?): String {
         .joinToString(" ") { word ->
             word.lowercase().replaceFirstChar { it.titlecase() }
         }
+}
+
+private fun String.initials(): String {
+    return split(" ")
+        .filter { it.isNotBlank() }
+        .take(2)
+        .joinToString("") { it.first().uppercaseChar().toString() }
+        .ifBlank { "M" }
 }

@@ -6,14 +6,35 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.muul.data.local.HaversineUtils
 import com.example.muul.data.model.POI
+import com.example.muul.data.remote.PoiDescriptionInfo
+import com.example.muul.data.remote.PoiDescriptionRepository
 import com.example.muul.data.remote.POIRepository
 import com.example.muul.util.LocationHelper
 import com.example.muul.util.StepTracker
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.Locale
+import kotlin.math.ceil
 import kotlin.math.hypot
+
+data class MapSearchSuggestion(
+    val title: String,
+    val subtitle: String,
+    val type: MapSearchSuggestionType,
+    val poi: POI? = null
+)
+
+enum class MapSearchSuggestionType {
+    POI,
+    HISTORY,
+    QUERY
+}
 
 class MapViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -29,11 +50,26 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedPoi = MutableStateFlow<POI?>(null)
     val selectedPoi: StateFlow<POI?> = _selectedPoi
 
+    private val poiDescriptionRepository = PoiDescriptionRepository()
+    private val descriptionCache = mutableMapOf<String, PoiDescriptionInfo?>()
+    private var descriptionJob: Job? = null
+
+    private val _selectedPoiDescription = MutableStateFlow<PoiDescriptionInfo?>(null)
+    val selectedPoiDescription: StateFlow<PoiDescriptionInfo?> = _selectedPoiDescription
+
+    private val _selectedPoiDescriptionLoading = MutableStateFlow(false)
+    val selectedPoiDescriptionLoading: StateFlow<Boolean> = _selectedPoiDescriptionLoading
+
     private val _activeFilter = MutableStateFlow("todos")
     val activeFilter: StateFlow<String> = _activeFilter
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery
+
+    private val recentSearches = mutableListOf<String>()
+
+    private val _searchSuggestions = MutableStateFlow<List<MapSearchSuggestion>>(emptyList())
+    val searchSuggestions: StateFlow<List<MapSearchSuggestion>> = _searchSuggestions
 
     private val _loading = MutableStateFlow(true)
     val loading: StateFlow<Boolean> = _loading
@@ -45,7 +81,7 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
     val mapReady: StateFlow<Boolean> = _mapReady
 
     private var lastPoiRefreshLocation: Pair<Double, Double>? = null
-    private val minPoiRefreshDistanceMeters = 35.0
+    private val minPoiRefreshDistanceMeters = 180.0
 
     private val _zoomLevel = MutableStateFlow(14.0)
     val zoomLevel: StateFlow<Double> = _zoomLevel
@@ -171,15 +207,31 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 Log.d("MUUL", "Buscando ubicación GPS inicial...")
 
+                val fallbackLocation = Pair(19.8440, -90.5300)
+                _ubicacionUsuario.value = fallbackLocation
+                lastPoiRefreshLocation = fallbackLocation
+                _mapReady.value = true
+                fetchPOIs(fallbackLocation)
+
                 val initialLocation = locationHelper.getCurrentLocation()
 
                 Log.d("MUUL", "Ubicación inicial obtenida: $initialLocation")
 
-                _ubicacionUsuario.value = initialLocation
-                lastPoiRefreshLocation = initialLocation
-                _mapReady.value = true
+                if (initialLocation != null) {
+                    _ubicacionUsuario.value = initialLocation
 
-                fetchPOIs()
+                    val movedFromFallback = HaversineUtils.haversine(
+                        fallbackLocation.first,
+                        fallbackLocation.second,
+                        initialLocation.first,
+                        initialLocation.second
+                    )
+
+                    if (movedFromFallback >= minPoiRefreshDistanceMeters) {
+                        lastPoiRefreshLocation = initialLocation
+                        fetchPOIs(initialLocation)
+                    }
+                }
 
                 locationHelper.getLocationUpdates().collect { location ->
                     val previousLocation = _ubicacionUsuario.value
@@ -196,7 +248,7 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
 
                     if (shouldRefreshPois && lastPoiRefreshLocation != location) {
                         lastPoiRefreshLocation = location
-                        fetchPOIs()
+                        fetchPOIs(location)
                     }
                 }
             } catch (e: Exception) {
@@ -210,20 +262,24 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun fetchPOIs() {
+    private fun fetchPOIs(targetLocation: Pair<Double, Double>? = null) {
         viewModelScope.launch {
             try {
-                val ubicacion = _ubicacionUsuario.value ?: Pair(19.8440, -90.5300)
+                val ubicacion = targetLocation ?: _ubicacionUsuario.value ?: Pair(19.8440, -90.5300)
 
                 Log.d(
                     "MUUL",
                     "Buscando POIs cerca de: ${ubicacion.first}, ${ubicacion.second}"
                 )
 
-                val data = repository.fetchPOIsCercanos(
-                    ubicacion.first,
-                    ubicacion.second
-                )
+                val data = withTimeoutOrNull(15_000L) {
+                    withContext(Dispatchers.IO) {
+                        repository.fetchPOIsCercanos(
+                            ubicacion.first,
+                            ubicacion.second
+                        )
+                    }
+                } ?: emptyList()
 
                 Log.d("MUUL", "POIs encontrados: ${data.size}")
 
@@ -251,6 +307,7 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
 
                 _pois.value = dataConDistancia
                 applyFilters()
+                updateSearchSuggestions()
 
                 Log.d(
                     "MUUL",
@@ -283,6 +340,28 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
     fun setSearchQuery(query: String) {
         _searchQuery.value = query
         applyFilters()
+        updateSearchSuggestions()
+    }
+
+    fun selectSearchSuggestion(suggestion: MapSearchSuggestion) {
+        rememberSearch(suggestion.title)
+
+        val poi = suggestion.poi
+        if (poi != null) {
+            _searchQuery.value = poi.nombre
+            _searchSuggestions.value = emptyList()
+            applyFilters()
+            selectPoi(poi)
+            return
+        }
+
+        _searchQuery.value = suggestion.title
+        _searchSuggestions.value = emptyList()
+        applyFilters()
+    }
+
+    fun hideSearchSuggestions() {
+        _searchSuggestions.value = emptyList()
     }
 
     private fun applyFilters() {
@@ -293,11 +372,11 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
         val zoom = _zoomLevel.value
 
         val maxDistanceMeters = when {
-            zoom >= 17 -> 400
-            zoom >= 15 -> 1200
-            zoom >= 13 -> 2500
-            zoom >= 11 -> 4500
-            else -> 7000
+            zoom >= 17 -> 700
+            zoom >= 15 -> 1600
+            zoom >= 13 -> 3500
+            zoom >= 11 -> 8000
+            else -> 15000
         }
 
         val userLocation = _ubicacionUsuario.value ?: Pair(19.8440, -90.5300)
@@ -342,30 +421,89 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
+        if (query.isBlank() && filter == "todos") {
+            val minImportance = when {
+                zoom < 12 -> 45
+                zoom < 13 -> 35
+                zoom < 14.5 -> 24
+                else -> 0
+            }
+
+            if (minImportance > 0) {
+                result = result.filter { poiImportanceScore(it) >= minImportance }
+            }
+        }
+
         val maxVisiblePois = when {
             query.isNotBlank() -> 80
             filter != "todos" -> 90
             zoom >= 17 -> 120
             zoom >= 15 -> 90
             zoom >= 13 -> 60
-            else -> 35
+            zoom >= 12 -> 36
+            else -> 18
         }
 
         val selectedPoi = _selectedPoi.value
-        _filteredPois.value = result
-            .sortedWith(
-                compareBy<POI> { selectedPoi?.id != it.id }
-                    .thenBy { it.distanciaMetros }
+        _filteredPois.value = if (query.isBlank() && filter == "todos") {
+            selectBalancedPois(
+                pois = result,
+                maxVisiblePois = maxVisiblePois,
+                selectedPoi = selectedPoi
             )
-            .take(maxVisiblePois)
+        } else {
+            result
+                .sortedWith(
+                    compareBy<POI> { selectedPoi?.id != it.id }
+                        .thenByDescending { poiImportanceScore(it) }
+                        .thenBy { it.distanciaMetros }
+                )
+                .take(maxVisiblePois)
+        }
     }
 
     fun selectPoi(poi: POI) {
         _selectedPoi.value = poi
+        if (poi.descripcion.isNullOrBlank()) {
+            loadExternalDescription(poi)
+        } else {
+            descriptionJob?.cancel()
+            _selectedPoiDescription.value = null
+            _selectedPoiDescriptionLoading.value = false
+        }
     }
 
     fun clearSelectedPoi() {
         _selectedPoi.value = null
+        descriptionJob?.cancel()
+        _selectedPoiDescription.value = null
+        _selectedPoiDescriptionLoading.value = false
+    }
+
+    private fun loadExternalDescription(poi: POI) {
+        descriptionJob?.cancel()
+        _selectedPoiDescription.value = null
+
+        val cacheKey = poiDescriptionCacheKey(poi)
+        if (descriptionCache.containsKey(cacheKey)) {
+            _selectedPoiDescription.value = descriptionCache[cacheKey]
+            _selectedPoiDescriptionLoading.value = false
+            return
+        }
+
+        _selectedPoiDescriptionLoading.value = true
+        descriptionJob = viewModelScope.launch {
+            val description = withContext(Dispatchers.IO) {
+                poiDescriptionRepository.fetchDescription(poi)
+            }
+
+            val currentPoi = _selectedPoi.value
+            if (currentPoi != null && poiDescriptionCacheKey(currentPoi) == cacheKey) {
+                descriptionCache[cacheKey] = description
+                _selectedPoiDescription.value = description
+                _selectedPoiDescriptionLoading.value = false
+            }
+        }
     }
 
     fun formatDistance(meters: Double): String {
@@ -374,6 +512,171 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             "${meters.toInt()} m"
         }
+    }
+
+    private fun poiDescriptionCacheKey(poi: POI): String {
+        return poi.id.ifBlank {
+            "${poi.nombre}_${poi.latitud}_${poi.longitud}"
+        }
+    }
+
+    private fun updateSearchSuggestions() {
+        val query = _searchQuery.value.trim()
+
+        if (query.isBlank()) {
+            _searchSuggestions.value = recentSearches.take(4).map {
+                MapSearchSuggestion(
+                    title = it,
+                    subtitle = "Busqueda reciente",
+                    type = MapSearchSuggestionType.HISTORY
+                )
+            }
+            return
+        }
+
+        val normalizedQuery = normalizeSearchText(query)
+        val poiSuggestions = _pois.value
+            .asSequence()
+            .mapNotNull { poi ->
+                val haystack = normalizeSearchText(
+                    listOfNotNull(
+                        poi.nombre,
+                        poi.direccion,
+                        categoriaLabels[poi.categoria],
+                        poi.descripcion
+                    ).joinToString(" ")
+                )
+
+                if (!haystack.contains(normalizedQuery)) return@mapNotNull null
+
+                val startsWithScore = if (normalizeSearchText(poi.nombre).startsWith(normalizedQuery)) 1 else 0
+                poi to startsWithScore
+            }
+            .sortedWith(
+                compareByDescending<Pair<POI, Int>> { it.second }
+                    .thenByDescending { poiImportanceScore(it.first) }
+                    .thenBy { it.first.distanciaMetros }
+            )
+            .take(5)
+            .map { (poi, _) ->
+                MapSearchSuggestion(
+                    title = poi.nombre,
+                    subtitle = poi.direccion?.takeIf { it.isNotBlank() }
+                        ?: categoriaLabels[poi.categoria]
+                        ?: "Lugar cercano",
+                    type = MapSearchSuggestionType.POI,
+                    poi = poi
+                )
+            }
+            .toList()
+
+        val querySuggestion = MapSearchSuggestion(
+            title = query,
+            subtitle = "Buscar \"$query\"",
+            type = MapSearchSuggestionType.QUERY
+        )
+
+        _searchSuggestions.value = (poiSuggestions + querySuggestion).take(6)
+    }
+
+    private fun rememberSearch(text: String) {
+        val cleanText = text.trim()
+        if (cleanText.isBlank()) return
+
+        recentSearches.removeAll { it.equals(cleanText, ignoreCase = true) }
+        recentSearches.add(0, cleanText)
+        while (recentSearches.size > 6) {
+            recentSearches.removeLast()
+        }
+    }
+
+    private fun poiImportanceScore(poi: POI): Int {
+        val categoryScore = when (poi.categoria) {
+            "cultural", "atraccion" -> 50
+            "comida", "tienda" -> 30
+            "deportes" -> 24
+            "servicio" -> 18
+            else -> 10
+        }
+
+        val verificationScore = if (poi.verificado) 30 else 0
+        val contentScore = listOf(
+            poi.descripcion,
+            poi.direccion,
+            poi.horario_apertura,
+            poi.precio_rango
+        ).count { !it.isNullOrBlank() } * 6
+
+        return categoryScore + verificationScore + contentScore
+    }
+
+    private fun selectBalancedPois(
+        pois: List<POI>,
+        maxVisiblePois: Int,
+        selectedPoi: POI?
+    ): List<POI> {
+        if (pois.size <= maxVisiblePois) return pois.sortedForMap(selectedPoi)
+
+        val grouped = pois
+            .groupBy { it.categoria }
+            .mapValues { (_, categoryPois) -> categoryPois.sortedForMap(selectedPoi) }
+            .toMutableMap()
+
+        val categoriesInOrder = categorias
+            .filter { it != "todos" }
+            .filter { grouped[it].orEmpty().isNotEmpty() }
+
+        if (categoriesInOrder.isEmpty()) {
+            return pois.sortedForMap(selectedPoi).take(maxVisiblePois)
+        }
+
+        val perCategoryCap = ceil(maxVisiblePois.toDouble() / categoriesInOrder.size.toDouble())
+            .toInt()
+            .coerceAtLeast(2)
+        val selected = mutableListOf<POI>()
+
+        categoriesInOrder.forEach { category ->
+            grouped[category]
+                .orEmpty()
+                .take(perCategoryCap)
+                .forEach { poi ->
+                    if (selected.none { it.id == poi.id }) {
+                        selected.add(poi)
+                    }
+                }
+        }
+
+        if (selected.size < maxVisiblePois) {
+            pois.sortedForMap(selectedPoi).forEach { poi ->
+                if (selected.size >= maxVisiblePois) return@forEach
+                if (selected.none { it.id == poi.id }) {
+                    selected.add(poi)
+                }
+            }
+        }
+
+        return selected
+            .sortedWith(
+                compareBy<POI> { selectedPoi?.id != it.id }
+                    .thenBy { it.distanciaMetros }
+            )
+            .take(maxVisiblePois)
+    }
+
+    private fun List<POI>.sortedForMap(selectedPoi: POI?): List<POI> {
+        return sortedWith(
+            compareBy<POI> { selectedPoi?.id != it.id }
+                .thenByDescending { poiImportanceScore(it) }
+                .thenBy { it.distanciaMetros }
+        )
+    }
+
+    private fun normalizeSearchText(text: String): String {
+        return java.text.Normalizer.normalize(text.lowercase(Locale.getDefault()), java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{Mn}+"), "")
+            .replace(Regex("[^a-z0-9 ]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
     }
 
     override fun onCleared() {

@@ -42,4 +42,8 @@ class SupabaseUserRepositoryImpl(private val client: SupabaseClient) : UserRepos
         // Actualizar en la tabla 'profiles' o 'users' de Supabase
         // client.postgrest["users"].update(...)
     }
+
+    override suspend fun updateProfilePhotoUri(uri: String?) {
+        // Actualizar avatar_url en la tabla 'profiles' o 'users' de Supabase
+    }
 }
