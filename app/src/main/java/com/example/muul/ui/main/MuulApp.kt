@@ -1,8 +1,5 @@
 package com.example.muul.ui.main
 
-import android.graphics.BitmapFactory
-import android.net.Uri
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -35,11 +32,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -47,11 +42,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import coil3.compose.AsyncImage
 import com.example.muul.ui.auth.AuthViewModel
 import com.example.muul.ui.map.MapScreen
 import com.example.muul.ui.route.RouteViewModel
 import com.example.muul.ui.profile.ProfileScreen
-import java.io.File
 
 @Composable
 fun MuulApp(
@@ -62,7 +57,6 @@ fun MuulApp(
     if (currentUser.value != null) {
         MuulMainScreen(authViewModel = authViewModel)
     } else {
-        // Show auth (login/register)
         com.example.muul.ui.auth.AuthHost(authViewModel = authViewModel)
     }
 }
@@ -83,13 +77,11 @@ fun MuulMainScreen(
     )
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // Top Header
         MuulTopHeader(
             userEmail = currentUser.value?.email ?: "Usuario",
             profilePhotoUri = currentUser.value?.profilePhotoUri
         )
 
-        // Main content
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -111,7 +103,6 @@ fun MuulMainScreen(
             }
         }
 
-        // Bottom Navigation
         NavigationBar(
             modifier = Modifier.fillMaxWidth(),
             containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
@@ -196,17 +187,6 @@ private fun HeaderAvatar(
     userEmail: String,
     profilePhotoUri: String?
 ) {
-    val context = LocalContext.current
-    val imageBitmap = remember(profilePhotoUri) {
-        if (profilePhotoUri.isNullOrBlank()) {
-            null
-        } else {
-            runCatching {
-                decodeHeaderProfileBitmap(context, profilePhotoUri)?.asImageBitmap()
-            }.getOrNull()
-        }
-    }
-
     Box(
         modifier = Modifier
             .size(42.dp)
@@ -214,9 +194,9 @@ private fun HeaderAvatar(
             .border(2.dp, Color(0xFFFFCC00), CircleShape),
         contentAlignment = Alignment.Center
     ) {
-        if (imageBitmap != null) {
-            Image(
-                bitmap = imageBitmap,
+        if (!profilePhotoUri.isNullOrBlank()) {
+            AsyncImage(
+                model = profilePhotoUri,
                 contentDescription = "Foto de perfil",
                 modifier = Modifier
                     .fillMaxSize()
@@ -230,28 +210,6 @@ private fun HeaderAvatar(
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.Bold
             )
-        }
-    }
-}
-
-private fun decodeHeaderProfileBitmap(
-    context: android.content.Context,
-    profilePhotoUri: String
-): android.graphics.Bitmap? {
-    val parsedUri = runCatching { Uri.parse(profilePhotoUri) }.getOrNull()
-
-    if (parsedUri?.scheme == "file") {
-        return BitmapFactory.decodeFile(parsedUri.path)
-    }
-
-    val file = File(profilePhotoUri)
-    if (file.exists()) {
-        return BitmapFactory.decodeFile(file.absolutePath)
-    }
-
-    return parsedUri?.let { uri ->
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            BitmapFactory.decodeStream(input)
         }
     }
 }

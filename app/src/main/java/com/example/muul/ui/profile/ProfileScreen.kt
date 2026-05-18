@@ -1,12 +1,10 @@
 package com.example.muul.ui.profile
 
-import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -48,26 +46,23 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import coil3.compose.AsyncImage
 import com.example.muul.ui.auth.AuthViewModel
-import java.io.File
 import kotlin.math.roundToInt
 
 private val ProfileNavy = Color(0xFF001C43)
@@ -90,7 +85,9 @@ fun ProfileScreen(
     val distanceKm = totalSteps * 0.00074
     val calories = (totalSteps * 0.04).roundToInt()
     val level = (totalSteps / 200).coerceAtLeast(1)
-    val displayName = formatDisplayName(user?.email)
+    
+    val displayName = user?.username ?: "Viajero Muul"
+    
     val progress = ((totalSteps % 10_000) / 10_000f).coerceIn(0.08f, 1f)
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -274,8 +271,6 @@ private fun ProfileAvatar(
     photoUri: String?,
     onChangePhoto: () -> Unit
 ) {
-    val imageBitmap = rememberProfileImage(photoUri)
-
     Box(
         modifier = Modifier
             .size(96.dp)
@@ -284,9 +279,9 @@ private fun ProfileAvatar(
             .clickable(onClick = onChangePhoto),
         contentAlignment = Alignment.Center
     ) {
-        if (imageBitmap != null) {
-            Image(
-                bitmap = imageBitmap,
+        if (!photoUri.isNullOrBlank()) {
+            AsyncImage(
+                model = photoUri,
                 contentDescription = "Foto de perfil",
                 modifier = Modifier
                     .fillMaxSize()
@@ -317,42 +312,6 @@ private fun ProfileAvatar(
                 modifier = Modifier.size(17.dp),
                 tint = ProfileNavy
             )
-        }
-    }
-}
-
-@Composable
-private fun rememberProfileImage(photoUri: String?) =
-    LocalContext.current.let { context ->
-        remember(photoUri) {
-            if (photoUri.isNullOrBlank()) {
-                null
-            } else {
-                runCatching {
-                    decodeProfileBitmap(context = context, photoUri = photoUri)?.asImageBitmap()
-                }.getOrNull()
-            }
-        }
-    }
-
-private fun decodeProfileBitmap(
-    context: android.content.Context,
-    photoUri: String
-): android.graphics.Bitmap? {
-    val parsedUri = runCatching { Uri.parse(photoUri) }.getOrNull()
-
-    if (parsedUri?.scheme == "file") {
-        return BitmapFactory.decodeFile(parsedUri.path)
-    }
-
-    val file = File(photoUri)
-    if (file.exists()) {
-        return BitmapFactory.decodeFile(file.absolutePath)
-    }
-
-    return parsedUri?.let { uri ->
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            BitmapFactory.decodeStream(input)
         }
     }
 }
@@ -606,23 +565,6 @@ private fun profileBadges(totalSteps: Int, routesWithSteps: Int): List<ProfileBa
             unlocked = totalSteps >= 25_000
         )
     )
-}
-
-private fun formatDisplayName(email: String?): String {
-    val raw = email
-        ?.substringBefore("@")
-        ?.replace(".", " ")
-        ?.replace("_", " ")
-        ?.trim()
-        .orEmpty()
-
-    if (raw.isBlank()) return "Viajero Muul"
-
-    return raw.split(" ")
-        .filter { it.isNotBlank() }
-        .joinToString(" ") { word ->
-            word.lowercase().replaceFirstChar { it.titlecase() }
-        }
 }
 
 private fun String.initials(): String {

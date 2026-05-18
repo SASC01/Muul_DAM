@@ -57,7 +57,6 @@ import com.mapbox.maps.CameraOptions
 import com.mapbox.maps.ClickInteraction
 import com.mapbox.maps.GeoJSONSourceData
 import com.mapbox.maps.Image
-import com.mapbox.maps.ImageStretches
 import com.mapbox.maps.MapView
 import com.mapbox.maps.Style
 import com.mapbox.maps.extension.style.expressions.dsl.generated.get
@@ -140,7 +139,7 @@ fun MapScreen(
                     Toast.LENGTH_LONG
                 ).show()
             }
-        } else {
+        } else if (routeId != null) {
             Toast.makeText(
                 context,
                 "Permiso de actividad física denegado. No se podrán contar pasos.",
@@ -321,8 +320,8 @@ fun MapScreen(
                                 centerLat = center.latitude(),
                                 centerLng = center.longitude(),
                                 metersPerPixelAtLatitude = metersPerPixel,
-                                viewportWidthPx = mapView?.width ?: 0,
-                                viewportHeightPx = mapView?.height ?: 0
+                                viewportWidthPx = width,
+                                viewportHeightPx = height
                             )
                         }
 
@@ -330,7 +329,7 @@ fun MapScreen(
                         userManager = annotations.createCircleAnnotationManager()
                     }
                 },
-                update = { _ ->
+                update = { view ->
                     loadedStyle?.let { style ->
                         val poiSignature = pois.joinToString("|") { it.id }
                         if (poiSignature != renderedPoiSignature) {
@@ -351,9 +350,7 @@ fun MapScreen(
                         }
                     }
 
-                    poiManager?.let { manager ->
-                        manager.deleteAll()
-                    }
+                    poiManager?.deleteAll()
 
                     userManager?.let { manager ->
                         manager.deleteAll()
@@ -522,7 +519,7 @@ fun MapScreen(
                     val routeName = routeToTrack.nombre
                     val saved = routeViewModel.saveCurrentRoute(routeName)
 
-                    if (saved != null) {
+                    if (saved?.id != null) {
                         startRouteWithStepPermission(saved.id)
                     } else {
                         Toast.makeText(
@@ -665,8 +662,8 @@ private fun setupPoiMarkerImages(style: Style) {
                 1.0f,
                 createMarkerImage(spec.color, spec.symbol),
                 false,
-                emptyList<ImageStretches>(),
-                emptyList<ImageStretches>(),
+                emptyList(),
+                emptyList(),
                 null
             )
         }

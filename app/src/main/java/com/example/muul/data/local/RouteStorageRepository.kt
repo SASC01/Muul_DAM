@@ -22,15 +22,19 @@ class RouteStorageRepository(context: Context) {
             for (index in 0 until array.length()) {
                 add(routeFromJson(array.getJSONObject(index)))
             }
-        }.sortedByDescending { it.createdAt }
+        }
     }
 
     fun saveRoute(route: Ruta): Ruta {
         val routes = getSavedRoutes().toMutableList()
-        routes.removeAll { it.id == route.id }
-        routes.add(route)
+        // Si el ID es nulo, usamos uno temporal para la lógica local
+        val routeId = route.id ?: System.currentTimeMillis().toString()
+        val routeToSave = if (route.id == null) route.copy(id = routeId) else route
+        
+        routes.removeAll { it.id == routeId }
+        routes.add(routeToSave)
         prefs.edit().putString(namespacedKey(), JSONArray(routes.map { routeToJson(it) }).toString()).apply()
-        return route
+        return routeToSave
     }
 
     fun deleteRoute(routeId: String) {
@@ -46,13 +50,13 @@ class RouteStorageRepository(context: Context) {
     private fun routeToJson(route: Ruta): JSONObject {
         return JSONObject().apply {
             put("id", route.id)
+            put("user_id", route.userId)
             put("nombre", route.nombre)
             put("pasosTotales", route.pasosTotales)
             put("distanciaTotal", route.distanciaTotal)
             put("transportMode", route.transportMode)
             put("plannedDurationMinutes", route.plannedDurationMinutes)
             put("startTimeMinutes", route.startTimeMinutes)
-            put("createdAt", route.createdAt)
             put("lugares", JSONArray(route.lugares.map { poiToJson(it) }))
         }
     }
@@ -60,8 +64,9 @@ class RouteStorageRepository(context: Context) {
     private fun routeFromJson(obj: JSONObject): Ruta {
         val places = obj.optJSONArray("lugares") ?: JSONArray()
         return Ruta(
-            id = obj.optString("id"),
-            nombre = obj.optString("nombre"),
+            id = if (obj.isNull("id")) null else obj.optString("id"),
+            userId = if (obj.isNull("user_id")) null else obj.optString("user_id"),
+            nombre = obj.optString("nombre", "Nueva Ruta"),
             lugares = buildList {
                 for (index in 0 until places.length()) {
                     add(poiFromJson(places.getJSONObject(index)))
@@ -71,8 +76,7 @@ class RouteStorageRepository(context: Context) {
             distanciaTotal = obj.optDouble("distanciaTotal", 0.0),
             transportMode = obj.optString("transportMode", "WALKING"),
             plannedDurationMinutes = obj.optInt("plannedDurationMinutes", 0),
-            startTimeMinutes = obj.optInt("startTimeMinutes", 9 * 60),
-            createdAt = obj.optLong("createdAt", System.currentTimeMillis())
+            startTimeMinutes = obj.optInt("startTimeMinutes", 9 * 60)
         )
     }
 

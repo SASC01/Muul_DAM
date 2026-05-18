@@ -8,7 +8,6 @@ import com.example.muul.data.DataModule
 import com.example.muul.data.local.HaversineUtils
 import com.example.muul.data.local.RoutePlanner
 import com.example.muul.data.local.RoutingRepository
-import com.example.muul.data.local.RouteStorageRepository
 import com.example.muul.data.model.POI
 import com.example.muul.data.model.ItineraryStop
 import com.example.muul.data.model.Ruta
@@ -21,7 +20,7 @@ import kotlinx.coroutines.withContext
 
 class RouteViewModel(application: Application) : AndroidViewModel(application) {
     private val userRepo = DataModule.getUserRepository(application)
-    private val routeRepo = RouteStorageRepository(application)
+    private val routeRepo = DataModule.getRouteRepository(application)
 
     private val _currentRoute = MutableStateFlow<Ruta?>(null)
     val currentRoute: StateFlow<Ruta?> = _currentRoute
@@ -154,24 +153,18 @@ class RouteViewModel(application: Application) : AndroidViewModel(application) {
 
     fun saveCurrentRoute(routeName: String): Ruta? {
         val route = _currentRoute.value ?: return null
-        val routeWithLocation = if (route.lugares.isNotEmpty() && route.lugares[0].id == "user_location") {
-            route
-        } else {
-            route
-        }
-
-        val visiblePois = routeWithLocation.lugares.filterNot { it.id == "user_location" }
+        val visiblePois = route.lugares.filterNot { it.id == "user_location" }
         if (visiblePois.isEmpty()) return null
 
         val transportMode = _selectedTransportMode.value
-        val persistedRoute = routeWithLocation.copy(lugares = visiblePois)
+        val persistedRoute = route.copy(lugares = visiblePois)
         val savedRoute = persistedRoute.copy(
-            nombre = routeName.ifBlank { routeWithLocation.nombre },
+            nombre = routeName.ifBlank { route.nombre },
             transportMode = transportMode.name,
-            plannedDurationMinutes = routeWithLocation.plannedDurationMinutes
+            plannedDurationMinutes = route.plannedDurationMinutes
                 .takeIf { it > 0 }
                 ?: RoutePlanner.estimateMinutes(persistedRoute, transportMode),
-            distanciaTotal = routeWithLocation.distanciaTotal
+            distanciaTotal = route.distanciaTotal
                 .takeIf { it > 0.0 }
                 ?: RoutePlanner.routeDistanceMeters(persistedRoute),
             startTimeMinutes = _startTimeMinutes.value
@@ -182,12 +175,13 @@ class RouteViewModel(application: Application) : AndroidViewModel(application) {
             refreshSavedRoutes()
         }
 
-        _currentRoute.value = routeWithLocation
         return savedRoute
     }
 
     fun refreshSavedRoutes() {
-        _savedRoutes.value = routeRepo.getSavedRoutes()
+        viewModelScope.launch {
+            _savedRoutes.value = routeRepo.getSavedRoutes()
+        }
     }
 
     fun deleteSavedRoute(routeId: String) {
@@ -199,6 +193,14 @@ class RouteViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectSavedRoute(route: Ruta?) {
         _selectedSavedRoute.value = route
+        // Activar la ruta seleccionada para que aparezca en el mapa principal
+        if (route != null) {
+            _currentRoute.value = route
+            // Actualizar el modo de transporte al de la ruta guardada
+            val mode = runCatching { TransportMode.valueOf(route.transportMode) }.getOrDefault(TransportMode.WALKING)
+            _selectedTransportMode.value = mode
+            recomputeRouteForTransport()
+        }
     }
 
     fun buildItinerary(route: Ruta): List<ItineraryStop> {
@@ -214,18 +216,6 @@ class RouteViewModel(application: Application) : AndroidViewModel(application) {
     fun estimateCurrentRouteMinutes(): Int {
         val route = _currentRoute.value ?: return 0
         return RoutePlanner.estimateMinutes(route, _selectedTransportMode.value)
-    }
-
-    fun saveRoute(steps: Int) {
-        val route = _currentRoute.value ?: return
-        if (route.lugares.isEmpty()) return
-        val routeWithSteps = route.copy(pasosTotales = steps)
-        viewModelScope.launch {
-            val currentHistory = _routeHistory.value.toMutableList()
-            currentHistory.add(routeWithSteps)
-            _routeHistory.value = currentHistory
-        }
-        clearRoute()
     }
 
     fun prependUserLocation(userLat: Double, userLng: Double) {

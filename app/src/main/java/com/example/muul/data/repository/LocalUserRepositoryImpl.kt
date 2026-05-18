@@ -3,6 +3,7 @@ package com.example.muul.data.repository
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
+import androidx.core.content.edit
 import org.json.JSONObject
 import com.example.muul.data.model.User
 
@@ -28,18 +29,21 @@ class LocalUserRepositoryImpl(context: Context) : UserRepository {
             put("steps", JSONObject())
             put("profile_photo_uri", JSONObject.NULL)
         }
-        prefs.edit().putString(KEY_USER_PREFIX + user.email, userJson.toString()).apply()
-        prefs.edit().putString(KEY_CURRENT_EMAIL, user.email).apply()
+        prefs.edit {
+            putString(KEY_USER_PREFIX + user.email, userJson.toString())
+            putString(KEY_CURRENT_EMAIL, user.email)
+        }
         return true
     }
 
     override suspend fun login(emailOrUsername: String, password: String): User? {
-        // En local solo buscamos por email por simplicidad del mock
         val raw = prefs.getString(KEY_USER_PREFIX + emailOrUsername, null) ?: return null
         val obj = JSONObject(raw)
         val stored = obj.optString("password")
         return if (stored == password) {
-            prefs.edit().putString(KEY_CURRENT_EMAIL, emailOrUsername).apply()
+            prefs.edit {
+                putString(KEY_CURRENT_EMAIL, emailOrUsername)
+            }
             fromJson(raw)
         } else {
             null
@@ -47,7 +51,9 @@ class LocalUserRepositoryImpl(context: Context) : UserRepository {
     }
 
     override fun logout() {
-        prefs.edit().remove(KEY_CURRENT_EMAIL).apply()
+        prefs.edit {
+            remove(KEY_CURRENT_EMAIL)
+        }
     }
 
     override fun getCurrentUser(): User? {
@@ -57,24 +63,12 @@ class LocalUserRepositoryImpl(context: Context) : UserRepository {
     }
 
     override suspend fun addStepsForRoute(routeId: String, steps: Int) {
-        if (steps <= 0) {
-            Log.w("MUUL_STEPS", "No se guardan pasos porque steps = $steps para ruta $routeId")
-            return
-        }
+        if (steps <= 0) return
 
-        val user = getCurrentUser() ?: run {
-            Log.e("MUUL_STEPS", "No hay usuario actual para guardar pasos")
-            return
-        }
-
+        val user = getCurrentUser() ?: return
         val newTotalSteps = (user.totalSteps ?: 0) + steps
         val currentRouteSteps = user.stepsByRoute?.get(routeId) ?: 0
         val newRouteSteps = currentRouteSteps + steps
-
-        Log.d(
-            "MUUL_STEPS",
-            "Guardando $steps pasos para ruta $routeId. Total nuevo: $newTotalSteps"
-        )
 
         val updatedStepsByRoute = (user.stepsByRoute ?: emptyMap()) + (routeId to newRouteSteps)
 
@@ -90,21 +84,21 @@ class LocalUserRepositoryImpl(context: Context) : UserRepository {
         val raw = prefs.getString(KEY_USER_PREFIX + user.email, null) ?: return
         val obj = JSONObject(raw)
 
-        if (uri.isNullOrBlank()) {
+        if (uri == null) {
             obj.put("profile_photo_uri", JSONObject.NULL)
         } else {
             obj.put("profile_photo_uri", uri)
         }
 
-        val saved = prefs.edit()
-            .putString(KEY_USER_PREFIX + user.email, obj.toString())
-            .commit()
-
-        if (saved) {
-            Log.d("MUUL_USER", "Foto de perfil actualizada para ${user.email}")
-        } else {
-            Log.e("MUUL_USER", "No se pudo actualizar foto de perfil para ${user.email}")
+        prefs.edit {
+            putString(KEY_USER_PREFIX + user.email, obj.toString())
         }
+    }
+
+    override suspend fun uploadProfilePhoto(bytes: ByteArray, fileName: String): String? {
+        // Implementación mock para el repositorio local
+        Log.d("MUUL_USER", "Simulando subida de foto local: $fileName")
+        return null
     }
 
     private fun saveUserWithSteps(
@@ -123,14 +117,8 @@ class LocalUserRepositoryImpl(context: Context) : UserRepository {
         obj.put("total_steps", totalSteps)
         obj.put("steps", stepsObj)
 
-        val saved = prefs.edit()
-            .putString(KEY_USER_PREFIX + email, obj.toString())
-            .commit()
-
-        if (saved) {
-            Log.d("MUUL_STEPS", "Pasos guardados para $email: $totalSteps")
-        } else {
-            Log.e("MUUL_STEPS", "No se pudieron persistir pasos para $email")
+        prefs.edit {
+            putString(KEY_USER_PREFIX + email, obj.toString())
         }
     }
 

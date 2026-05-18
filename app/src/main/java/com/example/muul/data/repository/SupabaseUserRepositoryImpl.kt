@@ -3,6 +3,7 @@ package com.example.muul.data.repository
 import com.example.muul.data.model.User
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.postgrest
+import io.github.jan.supabase.storage.storage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -54,16 +55,14 @@ class SupabaseUserRepositoryImpl(private val client: SupabaseClient) : UserRepos
             val newStepsByRoute = user.stepsByRoute?.toMutableMap() ?: mutableMapOf()
             newStepsByRoute[routeId] = (newStepsByRoute[routeId] ?: 0) + steps
 
-            // Actualizamos total_steps, num_pasos (pasos de esta ruta) y el JSON de rutas
             client.postgrest["usuarios"].update({
                 User::totalSteps setTo newTotal
-                User::numPasos setTo steps // Guardamos los pasos capturados por el sensor en esta sesión
+                User::numPasos setTo steps
                 User::stepsByRoute setTo newStepsByRoute
             }) {
                 filter { User::id eq user.id }
             }
             
-            // Sincronizar el usuario local
             currentUser = user.copy(
                 totalSteps = newTotal, 
                 numPasos = steps, 
@@ -85,6 +84,20 @@ class SupabaseUserRepositoryImpl(private val client: SupabaseClient) : UserRepos
             currentUser = user.copy(profilePhotoUri = uri)
         } catch (e: Exception) {
             e.printStackTrace()
+        }
+    }
+
+    override suspend fun uploadProfilePhoto(bytes: ByteArray, fileName: String): String? = withContext(Dispatchers.IO) {
+        try {
+            // Cambiado de "avatars" a "profile_photo" para coincidir con tu bucket en Supabase
+            val bucket = client.storage["profile_photo"]
+            bucket.upload(path = fileName, data = bytes) {
+                upsert = true
+            }
+            bucket.publicUrl(fileName)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
         }
     }
 }

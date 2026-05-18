@@ -14,22 +14,25 @@ class LocalRouteRepositoryImpl(context: Context, private val userRepository: Use
         private const val KEY_ROUTES = "saved_routes"
     }
 
-    override fun getSavedRoutes(): List<Ruta> {
+    override suspend fun getSavedRoutes(): List<Ruta> {
         val raw = prefs.getString(namespacedKey(), "[]") ?: "[]"
         val array = JSONArray(raw)
         return buildList {
             for (index in 0 until array.length()) {
                 add(routeFromJson(array.getJSONObject(index)))
             }
-        }.sortedByDescending { it.createdAt }
+        }
     }
 
     override suspend fun saveRoute(route: Ruta): Ruta {
         val routes = getSavedRoutes().toMutableList()
-        routes.removeAll { it.id == route.id }
-        routes.add(route)
+        val routeId = route.id ?: System.currentTimeMillis().toString()
+        val routeToSave = if (route.id == null) route.copy(id = routeId) else route
+        
+        routes.removeAll { it.id == routeId }
+        routes.add(routeToSave)
         prefs.edit().putString(namespacedKey(), JSONArray(routes.map { routeToJson(it) }).toString()).apply()
-        return route
+        return routeToSave
     }
 
     override suspend fun deleteRoute(routeId: String) {
@@ -45,13 +48,13 @@ class LocalRouteRepositoryImpl(context: Context, private val userRepository: Use
     private fun routeToJson(route: Ruta): JSONObject {
         return JSONObject().apply {
             put("id", route.id)
+            put("user_id", route.userId)
             put("nombre", route.nombre)
-            put("pasosTotales", route.pasosTotales)
-            put("distanciaTotal", route.distanciaTotal)
-            put("transportMode", route.transportMode)
-            put("plannedDurationMinutes", route.plannedDurationMinutes)
-            put("startTimeMinutes", route.startTimeMinutes)
-            put("createdAt", route.createdAt)
+            put("pasos_totales", route.pasosTotales)
+            put("distancia_total", route.distanciaTotal)
+            put("transport_mode", route.transportMode)
+            put("planned_duration_minutes", route.plannedDurationMinutes)
+            put("start_time_minutes", route.startTimeMinutes)
             put("lugares", JSONArray(route.lugares.map { poiToJson(it) }))
         }
     }
@@ -59,19 +62,19 @@ class LocalRouteRepositoryImpl(context: Context, private val userRepository: Use
     private fun routeFromJson(obj: JSONObject): Ruta {
         val places = obj.optJSONArray("lugares") ?: JSONArray()
         return Ruta(
-            id = obj.optString("id"),
-            nombre = obj.optString("nombre"),
+            id = if (obj.isNull("id")) null else obj.optString("id"),
+            userId = if (obj.isNull("user_id")) null else obj.optString("user_id"),
+            nombre = obj.optString("nombre", "Nueva Ruta"),
             lugares = buildList {
                 for (index in 0 until places.length()) {
                     add(poiFromJson(places.getJSONObject(index)))
                 }
             },
-            pasosTotales = obj.optInt("pasosTotales", 0),
-            distanciaTotal = obj.optDouble("distanciaTotal", 0.0),
-            transportMode = obj.optString("transportMode", "WALKING"),
-            plannedDurationMinutes = obj.optInt("plannedDurationMinutes", 0),
-            startTimeMinutes = obj.optInt("startTimeMinutes", 9 * 60),
-            createdAt = obj.optLong("createdAt", System.currentTimeMillis())
+            pasosTotales = obj.optInt("pasos_totales", 0),
+            distanciaTotal = obj.optDouble("distancia_total", 0.0),
+            transportMode = obj.optString("transport_mode", "WALKING"),
+            plannedDurationMinutes = obj.optInt("planned_duration_minutes", 0),
+            startTimeMinutes = obj.optInt("start_time_minutes", 9 * 60)
         )
     }
 

@@ -1,4 +1,4 @@
 <resources>
     <string name="app_name">Muul</string>
-    <string name="mapbox_access_token">tu_token_publico_aqui</string>
+    <string name="mapbox_access_token">TuTokenPublicoAqui</string>
 </resources>

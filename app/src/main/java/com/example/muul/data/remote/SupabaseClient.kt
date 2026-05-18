@@ -3,6 +3,7 @@ package com.example.muul.data.remote
 import io.github.jan.supabase.annotations.SupabaseInternal
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
+import io.github.jan.supabase.storage.Storage
 import io.ktor.client.engine.android.AndroidEngineConfig
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
@@ -14,13 +15,12 @@ import javax.net.ssl.X509TrustManager
 object SupabaseProvider {
     @OptIn(SupabaseInternal::class)
     val client = createSupabaseClient(
-        // URL Corregida: Sin 'db.' para usar el API Gateway de Postgrest
         supabaseUrl = "https://bhqimnreziqhwihykbmw.supabase.co",
         supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJocWltbnJlemlxaHdpaHlrYm13Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkwMzY2NTQsImV4cCI6MjA5NDYxMjY1NH0.A27sSoMk6eB-Rp1jI23oiBLmLe7O1IBGD60PZRahyOA"
     ) {
         install(Postgrest)
+        install(Storage)
         
-        // Bypass de validación SSL para permitir la conexión en tu fecha de 2026
         httpConfig {
             engine {
                 this as AndroidEngineConfig

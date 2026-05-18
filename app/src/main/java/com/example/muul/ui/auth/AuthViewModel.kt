@@ -23,7 +23,6 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val registeredOk = repo.register(user)
             if (registeredOk) {
-                // Después de un registro exitoso, iniciamos sesión automáticamente
                 val loggedUser = repo.login(user.email, user.password)
                 _currentUser.value = loggedUser
                 callback(loggedUser != null)
@@ -52,12 +51,20 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateProfilePhoto(sourceUri: Uri) {
         viewModelScope.launch {
-            val savedUri = withContext(Dispatchers.IO) {
-                copyProfilePhotoToAppStorage(sourceUri)
-            }
+            val user = repo.getCurrentUser() ?: return@launch
+            
+            // 1. Obtener los bytes de la imagen
+            val bytes = withContext(Dispatchers.IO) {
+                getApplication<Application>().contentResolver.openInputStream(sourceUri)?.use { it.readBytes() }
+            } ?: return@launch
 
-            if (savedUri != null) {
-                repo.updateProfilePhotoUri(savedUri)
+            // 2. Subir a Supabase Storage
+            val fileName = "avatar_${user.id ?: user.username}_${System.currentTimeMillis()}.jpg"
+            val publicUrl = repo.uploadProfilePhoto(bytes, fileName)
+
+            // 3. Si la subida fue exitosa, guardar el link en la tabla de usuarios
+            if (publicUrl != null) {
+                repo.updateProfilePhotoUri(publicUrl)
                 _currentUser.value = repo.getCurrentUser()
             }
         }
@@ -68,27 +75,5 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             repo.updateProfilePhotoUri(null)
             _currentUser.value = repo.getCurrentUser()
         }
-    }
-
-    private fun copyProfilePhotoToAppStorage(sourceUri: Uri): String? {
-        val application = getApplication<Application>()
-        val user = repo.getCurrentUser() ?: return null
-        val safeEmail = user.email
-            .lowercase()
-            .replace(Regex("[^a-z0-9]"), "_")
-        val targetDirectory = File(application.filesDir, "profile_photos").apply {
-            mkdirs()
-        }
-        val targetFile = File(targetDirectory, "${safeEmail}_${System.currentTimeMillis()}.jpg")
-
-        return runCatching {
-            application.contentResolver.openInputStream(sourceUri)?.use { input ->
-                targetFile.outputStream().use { output ->
-                    input.copyTo(output)
-                }
-            } ?: return null
-
-            targetFile.absolutePath
-        }.getOrNull()
     }
 }

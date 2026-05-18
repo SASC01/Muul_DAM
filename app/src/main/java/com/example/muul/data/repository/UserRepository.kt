@@ -9,4 +9,5 @@ interface UserRepository {
     fun getCurrentUser(): User?
     suspend fun addStepsForRoute(routeId: String, steps: Int)
     suspend fun updateProfilePhotoUri(uri: String?)
+    suspend fun uploadProfilePhoto(bytes: ByteArray, fileName: String): String?
 }

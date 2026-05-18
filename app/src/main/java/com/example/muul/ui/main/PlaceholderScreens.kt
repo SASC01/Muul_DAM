@@ -21,13 +21,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.DirectionsBike
+import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.DirectionsBike
 import androidx.compose.material.icons.filled.DirectionsCar
-import androidx.compose.material.icons.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.Map
-import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.Button
@@ -134,7 +133,8 @@ fun ItinerariesScreen(routeViewModel: RouteViewModel = viewModel()) {
                 EmptyState()
             }
         } else {
-            items(savedRoutes, key = { it.id }) { route ->
+            // Se usa el ID o el hashCode como key para evitar nulos y errores de tipo
+            items(savedRoutes, key = { it.id ?: it.hashCode() }) { route ->
                 SavedRouteCard(
                     route = route,
                     selected = selectedRoute?.id == route.id,
@@ -145,7 +145,8 @@ fun ItinerariesScreen(routeViewModel: RouteViewModel = viewModel()) {
                         }.getOrDefault(TransportMode.WALKING)
                     },
                     onDelete = {
-                        routeViewModel.deleteSavedRoute(route.id)
+                        // Se maneja la nulabilidad del ID
+                        route.id?.let { routeViewModel.deleteSavedRoute(it) }
                     }
                 )
             }
@@ -370,14 +371,14 @@ private fun ItineraryBuilderCard(
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
                     value = availableMinutes,
-                    onValueChange = onAvailableMinutesChange,
+                    onValueChange = { onAvailableMinutesChange(it) },
                     modifier = Modifier.weight(1f),
                     label = { Text("Minutos") },
                     singleLine = true
                 )
                 OutlinedTextField(
                     value = startTime,
-                    onValueChange = onStartTimeChange,
+                    onValueChange = { onStartTimeChange(it) },
                     modifier = Modifier.weight(1f),
                     label = { Text("Inicio") },
                     singleLine = true
@@ -509,10 +510,10 @@ private fun formatMinutes(minutes: Int): String {
 
 private fun transportIcon(modeName: String): ImageVector {
     return when (modeName) {
-        TransportMode.BIKING.name -> Icons.Default.DirectionsBike
+        TransportMode.BIKING.name -> Icons.AutoMirrored.Filled.DirectionsBike
         TransportMode.CAR.name -> Icons.Default.DirectionsCar
         TransportMode.TAXI.name -> Icons.Default.DirectionsCar
-        else -> Icons.Default.DirectionsWalk
+        else -> Icons.AutoMirrored.Filled.DirectionsWalk
     }
 }
 
