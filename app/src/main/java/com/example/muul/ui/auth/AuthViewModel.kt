@@ -19,19 +19,25 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     private val _currentUser = MutableStateFlow<User?>(repo.getCurrentUser())
     val currentUser: StateFlow<User?> = _currentUser
 
-    fun register(email: String, password: String, callback: (Boolean) -> Unit) {
+    fun register(user: User, callback: (Boolean) -> Unit) {
         viewModelScope.launch {
-            val ok = repo.register(email, password)
-            _currentUser.value = repo.getCurrentUser()
-            callback(ok)
+            val registeredOk = repo.register(user)
+            if (registeredOk) {
+                // Después de un registro exitoso, iniciamos sesión automáticamente
+                val loggedUser = repo.login(user.email, user.password)
+                _currentUser.value = loggedUser
+                callback(loggedUser != null)
+            } else {
+                callback(false)
+            }
         }
     }
 
-    fun login(email: String, password: String, callback: (Boolean) -> Unit) {
+    fun login(emailOrUsername: String, password: String, callback: (Boolean) -> Unit) {
         viewModelScope.launch {
-            val ok = repo.login(email, password)
-            _currentUser.value = repo.getCurrentUser()
-            callback(ok)
+            val user = repo.login(emailOrUsername, password)
+            _currentUser.value = user
+            callback(user != null)
         }
     }
 

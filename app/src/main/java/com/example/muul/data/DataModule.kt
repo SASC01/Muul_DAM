@@ -1,9 +1,10 @@
 package com.example.muul.data
 
 import android.content.Context
+import com.example.muul.data.remote.SupabaseProvider
 import com.example.muul.data.repository.LocalRouteRepositoryImpl
-import com.example.muul.data.repository.LocalUserRepositoryImpl
 import com.example.muul.data.repository.RouteRepository
+import com.example.muul.data.repository.SupabaseUserRepositoryImpl
 import com.example.muul.data.repository.UserRepository
 
 object DataModule {
@@ -12,7 +13,7 @@ object DataModule {
 
     fun getUserRepository(context: Context): UserRepository {
         return userRepository ?: synchronized(this) {
-            userRepository ?: LocalUserRepositoryImpl(context).also { userRepository = it }
+            userRepository ?: SupabaseUserRepositoryImpl(SupabaseProvider.client).also { userRepository = it }
         }
     }
 

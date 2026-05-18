@@ -7,40 +7,85 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class SupabaseUserRepositoryImpl(private val client: SupabaseClient) : UserRepository {
-    
-    // NOTA: Esta es una implementación básica. 
-    // Supabase Auth y Postgrest se usarían aquí para persistir los datos.
-    
-    override suspend fun register(email: String, password: String): Boolean = withContext(Dispatchers.IO) {
+
+    private var currentUser: User? = null
+
+    override suspend fun register(user: User): Boolean = withContext(Dispatchers.IO) {
         try {
-            // Ejemplo: client.auth.signUpWith(Email) { ... }
+            val userToInsert = user.copy(id = null)
+            client.postgrest["usuarios"].insert(userToInsert)
             true
         } catch (e: Exception) {
+            e.printStackTrace()
             false
         }
     }
 
-    override suspend fun login(email: String, password: String): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun login(emailOrUsername: String, password: String): User? = withContext(Dispatchers.IO) {
         try {
-            // Ejemplo: client.auth.signInWith(Email) { ... }
-            true
+            val user = client.postgrest["usuarios"].select {
+                filter {
+                    or {
+                        User::email eq emailOrUsername
+                        User::username eq emailOrUsername
+                    }
+                    User::password eq password
+                }
+            }.decodeSingleOrNull<User>()
+
+            currentUser = user
+            user
         } catch (e: Exception) {
-            false
+            e.printStackTrace()
+            null
         }
     }
 
     override fun logout() {
-        // client.auth.signOut()
+        currentUser = null
     }
 
-    override fun getCurrentUser(): User? {
-        // Enlazar con la sesión de Supabase
-        return null 
+    override fun getCurrentUser(): User? = currentUser
+
+    override suspend fun addStepsForRoute(routeId: String, steps: Int) = withContext(Dispatchers.IO) {
+        val user = currentUser ?: return@withContext
+        try {
+            val newTotal = (user.totalSteps ?: 0) + steps
+            val newStepsByRoute = user.stepsByRoute?.toMutableMap() ?: mutableMapOf()
+            newStepsByRoute[routeId] = (newStepsByRoute[routeId] ?: 0) + steps
+
+            // Actualizamos total_steps, num_pasos (pasos de esta ruta) y el JSON de rutas
+            client.postgrest["usuarios"].update({
+                User::totalSteps setTo newTotal
+                User::numPasos setTo steps // Guardamos los pasos capturados por el sensor en esta sesión
+                User::stepsByRoute setTo newStepsByRoute
+            }) {
+                filter { User::id eq user.id }
+            }
+            
+            // Sincronizar el usuario local
+            currentUser = user.copy(
+                totalSteps = newTotal, 
+                numPasos = steps, 
+                stepsByRoute = newStepsByRoute
+            )
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
-    override suspend fun addStepsForRoute(routeId: String, steps: Int) {
-        // Actualizar en la tabla 'profiles' o 'users' de Supabase
-        // client.postgrest["users"].update(...)
+    override suspend fun updateProfilePhotoUri(uri: String?) = withContext(Dispatchers.IO) {
+        val user = currentUser ?: return@withContext
+        try {
+            client.postgrest["usuarios"].update({
+                User::profilePhotoUri setTo uri
+            }) {
+                filter { User::id eq user.id }
+            }
+            currentUser = user.copy(profilePhotoUri = uri)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     override suspend fun updateProfilePhotoUri(uri: String?) {
