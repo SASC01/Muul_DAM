@@ -7,14 +7,23 @@ import io.github.jan.supabase.storage.storage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-class SupabaseUserRepositoryImpl(private val client: SupabaseClient) : UserRepository {
+class SupabaseUserRepositoryImpl(
+    private val client: SupabaseClient
+) : UserRepository {
 
     private var currentUser: User? = null
 
     override suspend fun register(user: User): Boolean = withContext(Dispatchers.IO) {
         try {
-            val userToInsert = user.copy(id = null)
+            val userToInsert = user.copy(
+                id = null,
+                totalSteps = 0,
+                numPasos = 0,
+                stepsByRoute = emptyMap()
+            )
+
             client.postgrest["usuarios"].insert(userToInsert)
+
             true
         } catch (e: Exception) {
             e.printStackTrace()
@@ -22,7 +31,10 @@ class SupabaseUserRepositoryImpl(private val client: SupabaseClient) : UserRepos
         }
     }
 
-    override suspend fun login(emailOrUsername: String, password: String): User? = withContext(Dispatchers.IO) {
+    override suspend fun login(
+        emailOrUsername: String,
+        password: String
+    ): User? = withContext(Dispatchers.IO) {
         try {
             val user = client.postgrest["usuarios"].select {
                 filter {
@@ -30,6 +42,7 @@ class SupabaseUserRepositoryImpl(private val client: SupabaseClient) : UserRepos
                         User::email eq emailOrUsername
                         User::username eq emailOrUsername
                     }
+
                     User::password eq password
                 }
             }.decodeSingleOrNull<User>()
@@ -46,26 +59,38 @@ class SupabaseUserRepositoryImpl(private val client: SupabaseClient) : UserRepos
         currentUser = null
     }
 
-    override fun getCurrentUser(): User? = currentUser
+    override fun getCurrentUser(): User? {
+        return currentUser
+    }
 
-    override suspend fun addStepsForRoute(routeId: String, steps: Int) = withContext(Dispatchers.IO) {
+    override suspend fun addStepsForRoute(
+        routeId: String,
+        steps: Int
+    ) = withContext(Dispatchers.IO) {
+        if (steps <= 0) return@withContext
+
         val user = currentUser ?: return@withContext
+        val userId = user.id ?: return@withContext
+
         try {
-            val newTotal = (user.totalSteps ?: 0) + steps
-            val newStepsByRoute = user.stepsByRoute?.toMutableMap() ?: mutableMapOf()
+            val newTotal = user.totalSteps + steps
+
+            val newStepsByRoute = user.stepsByRoute.toMutableMap()
             newStepsByRoute[routeId] = (newStepsByRoute[routeId] ?: 0) + steps
 
             client.postgrest["usuarios"].update({
                 User::totalSteps setTo newTotal
-                User::numPasos setTo steps
+                User::numPasos setTo newTotal
                 User::stepsByRoute setTo newStepsByRoute
             }) {
-                filter { User::id eq user.id }
+                filter {
+                    User::id eq userId
+                }
             }
-            
+
             currentUser = user.copy(
-                totalSteps = newTotal, 
-                numPasos = steps, 
+                totalSteps = newTotal,
+                numPasos = newTotal,
                 stepsByRoute = newStepsByRoute
             )
         } catch (e: Exception) {
@@ -73,26 +98,43 @@ class SupabaseUserRepositoryImpl(private val client: SupabaseClient) : UserRepos
         }
     }
 
-    override suspend fun updateProfilePhotoUri(uri: String?) = withContext(Dispatchers.IO) {
+    override suspend fun updateProfilePhotoUri(
+        uri: String?
+    ) = withContext(Dispatchers.IO) {
         val user = currentUser ?: return@withContext
+        val userId = user.id ?: return@withContext
+
         try {
             client.postgrest["usuarios"].update({
                 User::profilePhotoUri setTo uri
             }) {
-                filter { User::id eq user.id }
+                filter {
+                    User::id eq userId
+                }
             }
-            currentUser = user.copy(profilePhotoUri = uri)
+
+            currentUser = user.copy(
+                profilePhotoUri = uri
+            )
         } catch (e: Exception) {
             e.printStackTrace()
         }
     }
 
-    override suspend fun uploadProfilePhoto(bytes: ByteArray, fileName: String): String? = withContext(Dispatchers.IO) {
+    override suspend fun uploadProfilePhoto(
+        bytes: ByteArray,
+        fileName: String
+    ): String? = withContext(Dispatchers.IO) {
         try {
             val bucket = client.storage["profile_photo"]
-            bucket.upload(path = fileName, data = bytes) {
+
+            bucket.upload(
+                path = fileName,
+                data = bytes
+            ) {
                 upsert = true
             }
+
             bucket.publicUrl(fileName)
         } catch (e: Exception) {
             e.printStackTrace()

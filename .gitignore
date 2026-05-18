@@ -15,3 +15,5 @@
 local.properties
 SETUP.md
 gradle.properties
+# Java heap dumps
+*.hprof
