@@ -3,6 +3,7 @@ package com.example.muul.data.repository
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
+import androidx.core.content.edit
 import com.example.muul.data.model.User
 import org.json.JSONObject
 
@@ -32,20 +33,14 @@ class LocalUserRepositoryImpl(context: Context) : UserRepository {
             put("profile_photo_uri", JSONObject.NULL)
         }
 
-        val savedUser = prefs.edit()
-            .putString(KEY_USER_PREFIX + user.email, userJson.toString())
-            .commit()
+        prefs.edit {
+            putString(KEY_USER_PREFIX + user.email, userJson.toString())
+            putString(KEY_CURRENT_EMAIL, user.email)
+        }
 
-        val savedSession = prefs.edit()
-            .putString(KEY_CURRENT_EMAIL, user.email)
-            .commit()
+        Log.d("MUUL_AUTH", "Usuario registrado localmente: ${user.email}")
 
-        Log.d(
-            "MUUL_AUTH",
-            "Usuario registrado localmente: ${user.email}, savedUser=$savedUser, savedSession=$savedSession"
-        )
-
-        return savedUser && savedSession
+        return true
     }
 
     override suspend fun login(emailOrUsername: String, password: String): User? {
@@ -54,12 +49,10 @@ class LocalUserRepositoryImpl(context: Context) : UserRepository {
         val storedPassword = obj.optString("password")
 
         return if (storedPassword == password) {
-            prefs.edit()
-                .putString(KEY_CURRENT_EMAIL, emailOrUsername)
-                .apply()
-
+            prefs.edit {
+                putString(KEY_CURRENT_EMAIL, emailOrUsername)
+            }
             Log.d("MUUL_AUTH", "Usuario logueado localmente: $emailOrUsername")
-
             fromJson(raw)
         } else {
             Log.w("MUUL_AUTH", "Login local fallido para: $emailOrUsername")
@@ -68,10 +61,9 @@ class LocalUserRepositoryImpl(context: Context) : UserRepository {
     }
 
     override fun logout() {
-        prefs.edit()
-            .remove(KEY_CURRENT_EMAIL)
-            .apply()
-
+        prefs.edit {
+            remove(KEY_CURRENT_EMAIL)
+        }
         Log.d("MUUL_AUTH", "Sesión local cerrada")
     }
 
@@ -84,25 +76,21 @@ class LocalUserRepositoryImpl(context: Context) : UserRepository {
 
     override suspend fun addStepsForRoute(routeId: String, steps: Int) {
         if (steps <= 0) {
-            Log.w(
-                "MUUL_STEPS",
-                "No se guardan pasos porque steps = $steps para ruta $routeId"
-            )
+            Log.w("MUUL_STEPS", "No se guardan pasos porque steps = $steps para ruta $routeId")
             return
         }
 
-        val user = getCurrentUser()
-
-        if (user == null) {
+        val user = getCurrentUser() ?: run {
             Log.e("MUUL_STEPS", "No hay usuario actual para guardar pasos")
             return
         }
 
-        val newTotalSteps = user.totalSteps + steps
+        val currentSteps = user.totalSteps ?: 0
+        val newTotalSteps = currentSteps + steps
 
         Log.d(
             "MUUL_STEPS",
-            "Agregando $steps pasos. Ruta: $routeId. Total anterior: ${user.totalSteps}, total nuevo: $newTotalSteps"
+            "Agregando $steps pasos localmente. Ruta: $routeId. Total anterior: $currentSteps, total nuevo: $newTotalSteps"
         )
 
         saveUserWithSteps(
@@ -122,43 +110,30 @@ class LocalUserRepositoryImpl(context: Context) : UserRepository {
             obj.put("profile_photo_uri", uri)
         }
 
-        val saved = prefs.edit()
-            .putString(KEY_USER_PREFIX + user.email, obj.toString())
-            .commit()
-
-        if (saved) {
-            Log.d("MUUL_USER", "Foto de perfil actualizada para ${user.email}")
-        } else {
-            Log.e("MUUL_USER", "No se pudo actualizar foto de perfil para ${user.email}")
+        prefs.edit {
+            putString(KEY_USER_PREFIX + user.email, obj.toString())
         }
+        Log.d("MUUL_USER", "Foto de perfil actualizada localmente para ${user.email}")
+    }
+
+    override suspend fun uploadProfilePhoto(bytes: ByteArray, fileName: String): String? {
+        // Implementación mock para el repositorio local: simulamos una subida local
+        Log.d("MUUL_USER", "Simulando subida local de foto: $fileName")
+        return null
     }
 
     private fun saveUserWithSteps(
         email: String,
         totalSteps: Int
     ) {
-        val raw = prefs.getString(KEY_USER_PREFIX + email, null)
-
-        if (raw == null) {
-            Log.e("MUUL_STEPS", "No se encontró el usuario local $email")
-            return
-        }
-
+        val raw = prefs.getString(KEY_USER_PREFIX + email, null) ?: return
         val obj = JSONObject(raw)
 
         obj.put("total_steps", totalSteps)
-
-        // Mantener sincronizado este campo por compatibilidad con la versión remota/Supabase.
         obj.put("num_pasos", totalSteps)
 
-        val saved = prefs.edit()
-            .putString(KEY_USER_PREFIX + email, obj.toString())
-            .commit()
-
-        if (saved) {
-            Log.d("MUUL_STEPS", "Pasos guardados para $email: $totalSteps")
-        } else {
-            Log.e("MUUL_STEPS", "No se pudieron persistir pasos para $email")
+        prefs.edit {
+            putString(KEY_USER_PREFIX + email, obj.toString())
         }
     }
 
@@ -170,7 +145,6 @@ class LocalUserRepositoryImpl(context: Context) : UserRepository {
 
         if (stepsObj != null) {
             val keys = stepsObj.keys()
-
             while (keys.hasNext()) {
                 val key = keys.next()
                 stepsMap[key] = stepsObj.optInt(key, 0)
@@ -183,10 +157,7 @@ class LocalUserRepositoryImpl(context: Context) : UserRepository {
             obj.optString("profile_photo_uri").takeIf { it.isNotBlank() }
         }
 
-        val totalSteps = obj.optInt(
-            "total_steps",
-            obj.optInt("num_pasos", 0)
-        )
+        val totalStepsVal = obj.optInt("total_steps", obj.optInt("num_pasos", 0))
 
         return User(
             id = obj.optString("id").takeIf { it.isNotBlank() },
@@ -195,8 +166,8 @@ class LocalUserRepositoryImpl(context: Context) : UserRepository {
             username = obj.optString("username"),
             email = obj.optString("email"),
             password = obj.optString("password"),
-            numPasos = obj.optInt("num_pasos", totalSteps),
-            totalSteps = totalSteps,
+            numPasos = obj.optInt("num_pasos", totalStepsVal),
+            totalSteps = totalStepsVal,
             stepsByRoute = stepsMap,
             profilePhotoUri = profilePhotoUri
         )

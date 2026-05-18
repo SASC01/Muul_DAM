@@ -87,10 +87,8 @@ class SupabaseUserRepositoryImpl(private val client: SupabaseClient) : UserRepos
         }
     }
 
-<<<<<<< HEAD
     override suspend fun uploadProfilePhoto(bytes: ByteArray, fileName: String): String? = withContext(Dispatchers.IO) {
         try {
-            // Cambiado de "avatars" a "profile_photo" para coincidir con tu bucket en Supabase
             val bucket = client.storage["profile_photo"]
             bucket.upload(path = fileName, data = bytes) {
                 upsert = true
@@ -100,9 +98,5 @@ class SupabaseUserRepositoryImpl(private val client: SupabaseClient) : UserRepos
             e.printStackTrace()
             null
         }
-=======
-    override suspend fun updateProfilePhotoUri(uri: String?) {
-        // Actualizar avatar_url en la tabla 'profiles' o 'users' de Supabase
->>>>>>> f56c19902b29f8ed7f7fb55ead665f95a1a67866
     }
 }
